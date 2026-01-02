@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工程帳務-含刪除功能版</title>
+    <title>工程帳務-終極自動化版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -27,7 +27,7 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
-        window.fb = { db, ref, onValue, push, update, remove }; // 新增 remove
+        window.fb = { db, ref, onValue, push, update, remove };
     </script>
 
     <style>
@@ -35,8 +35,8 @@
         .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; outline: none; font-size: 14px; }
         .label-tiny { font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; display: block; }
         select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; opacity: 0.8; }
-        .delete-btn { transition: all 0.2s; opacity: 0; }
         .project-row:hover .delete-btn { opacity: 1; }
+        .delete-btn { transition: all 0.2s; opacity: 0; }
     </style>
 </head>
 <body>
@@ -88,21 +88,32 @@
                 if (isBossMode) return;
                 if (!formData.client) return alert("請輸入客戶");
                 const pRef = window.fb.ref(window.fb.db, 'projects');
+                
+                // 新增時自動判定 0 元
                 const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
                 const bStatus = Number(formData.balance) === 0 ? '無尾款' : '未繳';
+                
                 window.fb.push(pRef, { ...formData, dStatus, bStatus, type: selectedType });
                 setFormData({ ...formData, client: '', deposit: 0, balance: 0, note: '', installDate: '', report: '' });
             };
 
             const updateField = (id, field, value) => {
                 if (isBossMode) return;
+                const updates = { [field]: value };
+                
+                // 【核心連動邏輯】修改金額時自動改狀態
+                if (field === 'deposit' && Number(value) === 0) updates.dStatus = '無訂金';
+                if (field === 'deposit' && Number(value) > 0) updates.dStatus = '未繳';
+                if (field === 'balance' && Number(value) === 0) updates.bStatus = '無尾款';
+                if (field === 'balance' && Number(value) > 0) updates.bStatus = '未繳';
+
                 const pRef = window.fb.ref(window.fb.db, `projects/${id}`);
-                window.fb.update(pRef, { [field]: value });
+                window.fb.update(pRef, updates);
             };
 
             const handleDelete = (id, client) => {
                 if (isBossMode) return;
-                if (confirm(`確定要刪除「${client}」的案件嗎？(刪除後無法恢復)`)) {
+                if (confirm(`確定要刪除「${client}」的案件嗎？`)) {
                     const pRef = window.fb.ref(window.fb.db, `projects/${id}`);
                     window.fb.remove(pRef);
                 }
@@ -150,7 +161,7 @@
                                     const status = getProjectStatus(p);
                                     const showBalanceWarning = status === "完工" && p.bStatus === '未繳';
                                     return (
-                                        <div key={p.firebaseId} className="project-row bg-white rounded-[32px] p-8 border border-slate-100 shadow-sm flex items-center relative group">
+                                        <div key={p.firebaseId} className="project-row bg-white rounded-[32px] p-8 border border-slate-100 shadow-sm flex items-center relative">
                                             <div className="w-60">
                                                 <p className="text-sm font-bold text-slate-400 font-mono mb-1">{p.orderDate}</p>
                                                 <h3 className="text-2xl font-black text-slate-800 leading-tight">{p.client}</h3>
@@ -202,7 +213,7 @@
                                             <div className="flex-1 flex gap-2 items-start">
                                                 <textarea disabled={isBossMode} className="w-full h-20 bg-slate-50 rounded-2xl p-4 text-[11px] font-bold text-slate-500 outline-none border-none resize-none" placeholder="備註內容..." value={p.note} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} />
                                                 {!isBossMode && (
-                                                    <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="delete-btn p-2 text-slate-300 hover:text-red-500" title="刪除案件">
+                                                    <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="delete-btn p-2 text-slate-300 hover:text-red-500">
                                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                                         </svg>
