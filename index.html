@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工程帳務-雲端全功能合體版</title>
+    <title>工程帳務-含刪除功能版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -12,7 +12,7 @@
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getDatabase, ref, onValue, push, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+        import { getDatabase, ref, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyD9g8PjN39YeiR302NUbh5t--OZ5FnqS0A",
@@ -27,16 +27,16 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
-        window.fb = { db, ref, onValue, push, update };
+        window.fb = { db, ref, onValue, push, update, remove }; // 新增 remove
     </script>
 
     <style>
         body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; }
         .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; outline: none; font-size: 14px; }
         .label-tiny { font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; display: block; }
-        .custom-card { border-radius: 32px; transition: all 0.3s ease; }
-        /* 唯讀模式下讓下拉選單看起來不像可以按 */
         select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; opacity: 0.8; }
+        .delete-btn { transition: all 0.2s; opacity: 0; }
+        .project-row:hover .delete-btn { opacity: 1; }
     </style>
 </head>
 <body>
@@ -84,18 +84,8 @@
                 });
             }, [projects, selectedMonth, selectedType]);
 
-            const exportToExcel = () => {
-                const data = filteredProjects.map(p => ({
-                    "日期": p.orderDate, "客戶名稱": p.client, "總金額": Number(p.deposit)+Number(p.balance), "工程狀態": getProjectStatus(p), "備註": p.note
-                }));
-                const ws = XLSX.utils.json_to_sheet(data);
-                const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, "報表");
-                XLSX.writeFile(wb, `${selectedMonth}月_${selectedType}.xlsx`);
-            };
-
             const handleSave = () => {
-                if (isBossMode) return; // 安全機制
+                if (isBossMode) return;
                 if (!formData.client) return alert("請輸入客戶");
                 const pRef = window.fb.ref(window.fb.db, 'projects');
                 const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
@@ -105,9 +95,17 @@
             };
 
             const updateField = (id, field, value) => {
-                if (isBossMode) return; // 徹底防止老闆改動
+                if (isBossMode) return;
                 const pRef = window.fb.ref(window.fb.db, `projects/${id}`);
                 window.fb.update(pRef, { [field]: value });
+            };
+
+            const handleDelete = (id, client) => {
+                if (isBossMode) return;
+                if (confirm(`確定要刪除「${client}」的案件嗎？(刪除後無法恢復)`)) {
+                    const pRef = window.fb.ref(window.fb.db, `projects/${id}`);
+                    window.fb.remove(pRef);
+                }
             };
 
             return (
@@ -123,13 +121,7 @@
 
                     <main className="flex-1 flex flex-col bg-white overflow-hidden">
                         <header className="px-10 py-6 flex justify-between items-center">
-                            <div className="flex items-center gap-4">
-                                <h1 className="text-3xl font-black text-slate-800">
-                                    {selectedMonth}月 <span className="text-indigo-600">{selectedType}</span>
-                                    {isBossMode && <span className="ml-4 text-xs bg-slate-200 text-slate-500 px-2 py-1 rounded">唯讀模式</span>}
-                                </h1>
-                                {!isBossMode && <button onClick={exportToExcel} className="bg-emerald-500 text-white px-4 py-1.5 rounded-xl text-xs font-black shadow-lg">📊 匯出 Excel</button>}
-                            </div>
+                            <h1 className="text-3xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span> {isBossMode && <span className="text-sm bg-slate-100 px-2 ml-2 rounded">唯讀</span>}</h1>
                             <div className="flex bg-slate-100 p-1 rounded-xl">
                                 {['公司件', '業務件', '地板壁紙'].map(t => (
                                     <button key={t} onClick={()=>setSelectedType(t)} className={`px-6 py-2 rounded-lg font-black text-xs ${selectedType===t?'bg-white text-indigo-600 shadow-sm':'text-slate-400'}`}>{t}</button>
@@ -153,13 +145,13 @@
                                 </div>
                             )}
 
-                            <div className="space-y-4">
+                            <div className="space-y-4 pb-20">
                                 {filteredProjects.map(p => {
                                     const status = getProjectStatus(p);
                                     const showBalanceWarning = status === "完工" && p.bStatus === '未繳';
                                     return (
-                                        <div key={p.firebaseId} className="bg-white rounded-[32px] p-8 border border-slate-100 shadow-sm flex items-center">
-                                            <div className="w-64">
+                                        <div key={p.firebaseId} className="project-row bg-white rounded-[32px] p-8 border border-slate-100 shadow-sm flex items-center relative group">
+                                            <div className="w-60">
                                                 <p className="text-sm font-bold text-slate-400 font-mono mb-1">{p.orderDate}</p>
                                                 <h3 className="text-2xl font-black text-slate-800 leading-tight">{p.client}</h3>
                                                 <span className="mt-2 inline-block bg-slate-100 px-3 py-1 rounded-lg text-[10px] font-black text-indigo-500 uppercase">{p.staff}</span>
@@ -170,7 +162,7 @@
                                                 <p className="text-sm font-bold text-red-500 mt-1 uppercase font-black">訂金 {p.deposit} / 尾款 {p.balance}</p>
                                             </div>
 
-                                            <div className="flex-[1.8] grid grid-cols-2 gap-x-8 gap-y-4 px-8 border-x border-slate-50">
+                                            <div className="flex-[1.5] grid grid-cols-2 gap-x-8 gap-y-4 px-8 border-x border-slate-50">
                                                 <div>
                                                     <label className="text-[10px] font-black text-indigo-400 block mb-1">訂金狀態</label>
                                                     <select disabled={isBossMode} className={`w-full text-xs font-bold rounded-xl px-4 py-2 border ${p.dStatus === '未繳' ? 'bg-red-50 text-red-500 border-red-100' : 'bg-slate-50 border-transparent text-slate-500'}`} value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
@@ -197,7 +189,7 @@
                                                 </div>
                                             </div>
 
-                                            <div className="w-56 px-8 flex flex-col gap-2">
+                                            <div className="w-48 px-8 flex flex-col gap-2">
                                                 <label className="text-[10px] font-black text-indigo-400 block">安裝日期</label>
                                                 <input disabled={isBossMode} type="date" className="w-full bg-slate-50 rounded-xl px-3 py-2 text-xs font-bold" value={p.installDate} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
                                                 {!isBossMode && (
@@ -207,8 +199,15 @@
                                                 )}
                                             </div>
 
-                                            <div className="flex-1">
+                                            <div className="flex-1 flex gap-2 items-start">
                                                 <textarea disabled={isBossMode} className="w-full h-20 bg-slate-50 rounded-2xl p-4 text-[11px] font-bold text-slate-500 outline-none border-none resize-none" placeholder="備註內容..." value={p.note} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} />
+                                                {!isBossMode && (
+                                                    <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="delete-btn p-2 text-slate-300 hover:text-red-500" title="刪除案件">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                        </svg>
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                     );
