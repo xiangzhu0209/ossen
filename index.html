@@ -2,13 +2,12 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工程帳務-終極自動化版</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>工程帳務-三星優化版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
@@ -31,12 +30,22 @@
     </script>
 
     <style>
-        body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; }
-        .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; outline: none; font-size: 14px; }
-        .label-tiny { font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; display: block; }
-        select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; opacity: 0.8; }
-        .project-row:hover .delete-btn { opacity: 1; }
-        .delete-btn { transition: all 0.2s; opacity: 0; }
+        body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; overflow-x: hidden; }
+        .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; font-size: 16px !important; } /* 防止三星縮放 */
+        select:disabled, input:disabled, textarea:disabled { opacity: 1; -webkit-text-fill-color: #334155; color: #334155; background-color: #f1f5f9; cursor: default; }
+        
+        /* 手機卡片式佈局優化 */
+        @media (max-width: 768px) {
+            .side-nav { width: 50px !important; }
+            .side-nav button { padding: 8px 0 !important; font-size: 10px !important; }
+            .project-card { flex-direction: column !important; gap: 12px !important; padding: 16px !important; }
+            .project-card > div { width: 100% !important; border: none !important; padding: 0 !important; }
+            .mobile-status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+            .header-flex { flex-direction: column; align-items: flex-start !important; gap: 10px; }
+        }
+        
+        .delete-btn { opacity: 0; transition: 0.2s; }
+        @media (min-width: 1024px) { .project-row:hover .delete-btn { opacity: 1; } }
     </style>
 </head>
 <body>
@@ -50,12 +59,7 @@
             const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
             const [selectedType, setSelectedType] = useState('公司件'); 
             const [projects, setProjects] = useState([]);
-            
-            const [formData, setFormData] = useState({ 
-                client: '', deposit: 0, balance: 0, 
-                orderDate: new Date().toISOString().split('T')[0], 
-                staff: '公司', note: '', receipt: '未繳', installDate: '', report: ''
-            });
+            const [formData, setFormData] = useState({ client: '', deposit: 0, balance: 0, orderDate: new Date().toISOString().split('T')[0], staff: '公司', note: '', receipt: '未繳', installDate: '', report: '' });
 
             const getProjectStatus = (p) => {
                 if (p.report === '有狀況') return "⚠️ 有狀況";
@@ -84,139 +88,119 @@
                 });
             }, [projects, selectedMonth, selectedType]);
 
-            const handleSave = () => {
-                if (isBossMode) return;
-                if (!formData.client) return alert("請輸入客戶");
-                const pRef = window.fb.ref(window.fb.db, 'projects');
-                
-                // 新增時自動判定 0 元
-                const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
-                const bStatus = Number(formData.balance) === 0 ? '無尾款' : '未繳';
-                
-                window.fb.push(pRef, { ...formData, dStatus, bStatus, type: selectedType });
-                setFormData({ ...formData, client: '', deposit: 0, balance: 0, note: '', installDate: '', report: '' });
-            };
-
             const updateField = (id, field, value) => {
                 if (isBossMode) return;
                 const updates = { [field]: value };
-                
-                // 【核心連動邏輯】修改金額時自動改狀態
                 if (field === 'deposit' && Number(value) === 0) updates.dStatus = '無訂金';
                 if (field === 'deposit' && Number(value) > 0) updates.dStatus = '未繳';
                 if (field === 'balance' && Number(value) === 0) updates.bStatus = '無尾款';
                 if (field === 'balance' && Number(value) > 0) updates.bStatus = '未繳';
-
-                const pRef = window.fb.ref(window.fb.db, `projects/${id}`);
-                window.fb.update(pRef, updates);
+                window.fb.update(window.fb.ref(window.fb.db, `projects/${id}`), updates);
             };
 
             const handleDelete = (id, client) => {
-                if (isBossMode) return;
-                if (confirm(`確定要刪除「${client}」的案件嗎？`)) {
-                    const pRef = window.fb.ref(window.fb.db, `projects/${id}`);
-                    window.fb.remove(pRef);
+                if (!isBossMode && confirm(`確定要刪除「${client}」的案件嗎？`)) {
+                    window.fb.remove(window.fb.ref(window.fb.db, `projects/${id}`));
                 }
+            };
+
+            const handleSave = () => {
+                if (isBossMode || !formData.client) return;
+                const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
+                const bStatus = Number(formData.balance) === 0 ? '無尾款' : '未繳';
+                window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType });
+                setFormData({ ...formData, client: '', deposit: 0, balance: 0, note: '', installDate: '', report: '' });
             };
 
             return (
                 <div className="flex h-screen overflow-hidden">
-                    <aside className="w-24 bg-[#0f172a] flex flex-col shrink-0">
-                        <div className="p-4 text-white font-black text-center border-b border-slate-800">2026</div>
-                        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                    {/* 側邊欄 */}
+                    <aside className="side-nav w-20 md:w-24 bg-[#0f172a] flex flex-col shrink-0">
+                        <div className="p-4 text-white font-black text-center border-b border-slate-800 text-[10px]">2026</div>
+                        <div className="flex-1 overflow-y-auto p-1 space-y-1">
                             { [...Array(12).keys()].map(i => (
-                                <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`w-full py-3 rounded-lg font-bold text-xs ${selectedMonth===i+1?'bg-indigo-600 text-white shadow-lg':'text-slate-500'}`}>{i+1}月</button>
+                                <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`w-full py-2 rounded-lg font-bold text-xs ${selectedMonth===i+1?'bg-indigo-600 text-white':'text-slate-500'}`}>{i+1}月</button>
                             ))}
                         </div>
                     </aside>
 
                     <main className="flex-1 flex flex-col bg-white overflow-hidden">
-                        <header className="px-10 py-6 flex justify-between items-center">
-                            <h1 className="text-3xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span> {isBossMode && <span className="text-sm bg-slate-100 px-2 ml-2 rounded">唯讀</span>}</h1>
-                            <div className="flex bg-slate-100 p-1 rounded-xl">
+                        <header className="px-4 md:px-10 py-4 header-flex flex justify-between items-center bg-white border-b border-slate-50">
+                            <h1 className="text-xl md:text-3xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></h1>
+                            <div className="flex bg-slate-100 p-1 rounded-xl overflow-x-auto whitespace-nowrap">
                                 {['公司件', '業務件', '地板壁紙'].map(t => (
-                                    <button key={t} onClick={()=>setSelectedType(t)} className={`px-6 py-2 rounded-lg font-black text-xs ${selectedType===t?'bg-white text-indigo-600 shadow-sm':'text-slate-400'}`}>{t}</button>
+                                    <button key={t} onClick={()=>setSelectedType(t)} className={`px-4 py-2 rounded-lg font-black text-[10px] md:text-xs ${selectedType===t?'bg-white text-indigo-600 shadow-sm':'text-slate-400'}`}>{t}</button>
                                 ))}
                             </div>
                         </header>
 
-                        <div className="flex-1 overflow-y-auto px-10 py-6 space-y-8 bg-slate-50">
+                        <div className="flex-1 overflow-y-auto px-4 md:px-10 py-4 bg-slate-50 space-y-4">
                             {!isBossMode && (
-                                <div className="bg-[#1e293b] p-8 rounded-[40px] shadow-2xl">
-                                    <div className="grid grid-cols-6 gap-4">
-                                        <div className="col-span-1"><label className="label-tiny">ORDER DATE</label><input type="date" className="input-dark w-full" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
-                                        <div className="col-span-3"><label className="label-tiny">CLIENT NAME</label><input placeholder="請輸入客戶名稱..." className="input-dark w-full" value={formData.client} onChange={e=>setFormData({...formData, client:e.target.value})}/></div>
-                                        <div className="col-span-2"><label className="label-tiny">STAFF</label><select className="input-dark w-full appearance-none" value={formData.staff} onChange={e=>setFormData({...formData, staff:e.target.value})}><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option></select></div>
-                                        <div className="col-span-1"><label className="label-tiny">DEPOSIT</label><input type="number" className="input-dark w-full font-mono" value={formData.deposit} onChange={e=>setFormData({...formData, deposit:e.target.value})}/></div>
-                                        <div className="col-span-1"><label className="label-tiny">BALANCE</label><input type="number" className="input-dark w-full font-mono" value={formData.balance} onChange={e=>setFormData({...formData, balance:e.target.value})}/></div>
-                                        <div className="col-span-1"><label className="label-tiny">INSTALL DATE</label><input type="date" className="input-dark w-full" value={formData.installDate} onChange={e=>setFormData({...formData, installDate:e.target.value})}/></div>
-                                        <div className="col-span-2"><label className="label-tiny">REMARK</label><input placeholder="備註內容..." className="input-dark w-full" value={formData.note} onChange={e=>setFormData({...formData, note:e.target.value})}/></div>
-                                        <div className="col-span-1 flex items-end"><button onClick={handleSave} className="w-full bg-indigo-500 py-3 rounded-xl font-black text-xs text-white shadow-lg">確認儲存</button></div>
+                                <div className="bg-[#1e293b] p-6 rounded-[24px] shadow-lg mb-6">
+                                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                                        <div className="col-span-1"><label className="label-tiny">日期</label><input type="date" className="input-dark w-full" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
+                                        <div className="col-span-1 md:col-span-3"><label className="label-tiny">客戶</label><input className="input-dark w-full" value={formData.client} onChange={e=>setFormData({...formData, client:e.target.value})}/></div>
+                                        <div className="col-span-1"><label className="label-tiny">人員</label><select className="input-dark w-full" value={formData.staff} onChange={e=>setFormData({...formData, staff:e.target.value})}><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option></select></div>
+                                        <div className="col-span-1"><label className="label-tiny">訂金</label><input type="number" className="input-dark w-full" value={formData.deposit} onChange={e=>setFormData({...formData, deposit:e.target.value})}/></div>
+                                        <div className="col-span-1"><label className="label-tiny">尾款</label><input type="number" className="input-dark w-full" value={formData.balance} onChange={e=>setFormData({...formData, balance:e.target.value})}/></div>
+                                        <div className="col-span-1 md:col-span-1 flex items-end"><button onClick={handleSave} className="w-full bg-indigo-500 py-3 rounded-xl font-black text-xs text-white">確認儲存</button></div>
                                     </div>
                                 </div>
                             )}
 
-                            <div className="space-y-4 pb-20">
+                            <div className="space-y-4 pb-10">
                                 {filteredProjects.map(p => {
                                     const status = getProjectStatus(p);
-                                    const showBalanceWarning = status === "完工" && p.bStatus === '未繳';
                                     return (
-                                        <div key={p.firebaseId} className="project-row bg-white rounded-[32px] p-8 border border-slate-100 shadow-sm flex items-center relative">
-                                            <div className="w-60">
-                                                <p className="text-sm font-bold text-slate-400 font-mono mb-1">{p.orderDate}</p>
-                                                <h3 className="text-2xl font-black text-slate-800 leading-tight">{p.client}</h3>
-                                                <span className="mt-2 inline-block bg-slate-100 px-3 py-1 rounded-lg text-[10px] font-black text-indigo-500 uppercase">{p.staff}</span>
+                                        <div key={p.firebaseId} className="project-card bg-white rounded-[24px] p-5 shadow-sm border border-slate-100 flex flex-row items-center relative">
+                                            <div className="md:w-60">
+                                                <p className="text-[10px] font-bold text-slate-400 font-mono uppercase">{p.orderDate}</p>
+                                                <h3 className="text-lg md:text-2xl font-black text-slate-800">{p.client}</h3>
+                                                <span className="bg-indigo-50 text-indigo-500 px-2 py-0.5 rounded text-[10px] font-bold">{p.staff}</span>
                                             </div>
 
-                                            <div className="flex-1 px-8">
-                                                <p className="text-4xl font-black text-slate-800 font-mono">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</p>
-                                                <p className="text-sm font-bold text-red-500 mt-1 uppercase font-black">訂金 {p.deposit} / 尾款 {p.balance}</p>
+                                            <div className="flex-1 md:px-8">
+                                                <p className="text-2xl md:text-4xl font-black text-slate-800 font-mono">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</p>
+                                                <div className="flex gap-2 text-[10px] font-black text-red-500">
+                                                    <span>訂金 {p.deposit}</span><span>/</span><span>尾款 {p.balance}</span>
+                                                </div>
                                             </div>
 
-                                            <div className="flex-[1.5] grid grid-cols-2 gap-x-8 gap-y-4 px-8 border-x border-slate-50">
+                                            <div className="flex-[1.5] mobile-status-grid md:px-8 md:border-x border-slate-100">
                                                 <div>
-                                                    <label className="text-[10px] font-black text-indigo-400 block mb-1">訂金狀態</label>
-                                                    <select disabled={isBossMode} className={`w-full text-xs font-bold rounded-xl px-4 py-2 border ${p.dStatus === '未繳' ? 'bg-red-50 text-red-500 border-red-100' : 'bg-slate-50 border-transparent text-slate-500'}`} value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
+                                                    <label className="text-[9px] font-black text-indigo-400 block mb-0.5">訂金</label>
+                                                    <select disabled={isBossMode} className="w-full text-[11px] font-bold rounded-lg px-2 py-1.5 bg-slate-50 border-none" value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
                                                         <option>未繳</option><option>已轉帳</option><option>已付現</option><option>無訂金</option>
                                                     </select>
                                                 </div>
                                                 <div>
-                                                    <label className="text-[10px] font-black text-emerald-400 block mb-1">工程狀態</label>
-                                                    <div className={`text-center py-2 rounded-xl text-xs font-black text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : 'bg-blue-500'}`}>
-                                                        {status}
-                                                    </div>
+                                                    <label className="text-[9px] font-black text-emerald-400 block mb-0.5">工程</label>
+                                                    <div className={`text-center py-1.5 rounded-lg text-[11px] font-black text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : 'bg-blue-500'}`}>{status}</div>
                                                 </div>
                                                 <div>
-                                                    <label className="text-[10px] font-black text-indigo-400 block mb-1">尾款狀態</label>
-                                                    <select disabled={isBossMode} className={`w-full text-xs font-bold rounded-xl px-4 py-2 border ${showBalanceWarning ? 'bg-red-50 text-red-500 border-red-100' : 'bg-slate-50 border-transparent text-slate-500'}`} value={p.bStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
+                                                    <label className="text-[9px] font-black text-indigo-400 block mb-0.5">尾款</label>
+                                                    <select disabled={isBossMode} className="w-full text-[11px] font-bold rounded-lg px-2 py-1.5 bg-slate-50 border-none" value={p.bStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
                                                         <option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>無尾款</option>
                                                     </select>
                                                 </div>
                                                 <div>
-                                                    <label className="text-[10px] font-black text-orange-400 block mb-1">收據功能</label>
-                                                    <select disabled={isBossMode} className="w-full text-xs font-bold rounded-xl px-4 py-2 bg-orange-50 text-orange-600 border border-orange-100" value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
-                                                        <option>未繳</option><option>已繳交</option><option>訊息確認</option><option>發票</option><option>免收據</option><option>安裝後補</option>
+                                                    <label className="text-[9px] font-black text-orange-400 block mb-0.5">收據</label>
+                                                    <select disabled={isBossMode} className="w-full text-[11px] font-bold rounded-lg px-2 py-1.5 bg-orange-50 text-orange-600 border-none" value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
+                                                        <option>未繳</option><option>已繳交</option><option>訊息確認</option><option>發票</option><option>免收據</option>
                                                     </select>
                                                 </div>
                                             </div>
 
-                                            <div className="w-48 px-8 flex flex-col gap-2">
-                                                <label className="text-[10px] font-black text-indigo-400 block">安裝日期</label>
-                                                <input disabled={isBossMode} type="date" className="w-full bg-slate-50 rounded-xl px-3 py-2 text-xs font-bold" value={p.installDate} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
-                                                {!isBossMode && (
-                                                    <button onClick={()=>updateField(p.firebaseId, 'report', p.report==='有狀況'?'':'有狀況')} className={`text-[9px] font-black py-1 rounded-md border ${p.report === '有狀況' ? 'bg-amber-500 text-white' : 'text-slate-300 border-slate-200'}`}>
-                                                        {p.report === '有狀況' ? '解除狀況' : '標記狀況'}
-                                                    </button>
-                                                )}
+                                            <div className="md:w-48 md:px-6">
+                                                <label className="text-[9px] font-black text-indigo-400 block">施工日</label>
+                                                <input disabled={isBossMode} type="date" className="w-full bg-slate-50 rounded-lg px-2 py-1.5 text-[11px] font-bold border-none" value={p.installDate} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
                                             </div>
 
-                                            <div className="flex-1 flex gap-2 items-start">
-                                                <textarea disabled={isBossMode} className="w-full h-20 bg-slate-50 rounded-2xl p-4 text-[11px] font-bold text-slate-500 outline-none border-none resize-none" placeholder="備註內容..." value={p.note} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} />
+                                            <div className="flex-1 flex gap-2">
+                                                <textarea disabled={isBossMode} className="w-full h-12 md:h-20 bg-slate-50 rounded-xl p-3 text-[11px] font-bold outline-none border-none resize-none" placeholder="備註..." value={p.note} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} />
                                                 {!isBossMode && (
-                                                    <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="delete-btn p-2 text-slate-300 hover:text-red-500">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                        </svg>
+                                                    <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="delete-btn p-1 text-slate-300 hover:text-red-500">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                                     </button>
                                                 )}
                                             </div>
