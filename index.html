@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>工程帳務-三星優化版</title>
+    <title>工程帳務-終極修復版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -31,10 +31,9 @@
 
     <style>
         body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; overflow-x: hidden; }
-        .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; font-size: 16px !important; } /* 防止三星縮放 */
-        select:disabled, input:disabled, textarea:disabled { opacity: 1; -webkit-text-fill-color: #334155; color: #334155; background-color: #f1f5f9; cursor: default; }
+        .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; font-size: 16px !important; }
+        select:disabled, input:disabled, textarea:disabled { opacity: 1; -webkit-text-fill-color: #334155; color: #334155; background-color: #f1f5f9; cursor: default; border: none; }
         
-        /* 手機卡片式佈局優化 */
         @media (max-width: 768px) {
             .side-nav { width: 50px !important; }
             .side-nav button { padding: 8px 0 !important; font-size: 10px !important; }
@@ -109,12 +108,11 @@
                 const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
                 const bStatus = Number(formData.balance) === 0 ? '無尾款' : '未繳';
                 window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType });
-                setFormData({ ...formData, client: '', deposit: 0, balance: 0, note: '', installDate: '', report: '' });
+                setFormData({ ...formData, client: '', deposit: 0, balance: 0, note: '', installDate: '', report: '', staff: '公司' });
             };
 
             return (
                 <div className="flex h-screen overflow-hidden">
-                    {/* 側邊欄 */}
                     <aside className="side-nav w-20 md:w-24 bg-[#0f172a] flex flex-col shrink-0">
                         <div className="p-4 text-white font-black text-center border-b border-slate-800 text-[10px]">2026</div>
                         <div className="flex-1 overflow-y-auto p-1 space-y-1">
@@ -140,7 +138,11 @@
                                     <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                                         <div className="col-span-1"><label className="label-tiny">日期</label><input type="date" className="input-dark w-full" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
                                         <div className="col-span-1 md:col-span-3"><label className="label-tiny">客戶</label><input className="input-dark w-full" value={formData.client} onChange={e=>setFormData({...formData, client:e.target.value})}/></div>
-                                        <div className="col-span-1"><label className="label-tiny">人員</label><select className="input-dark w-full" value={formData.staff} onChange={e=>setFormData({...formData, staff:e.target.value})}><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option></select></div>
+                                        <div className="col-span-1"><label className="label-tiny">人員</label>
+                                            <select className="input-dark w-full" value={formData.staff} onChange={e=>setFormData({...formData, staff:e.target.value})}>
+                                                <option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
+                                            </select>
+                                        </div>
                                         <div className="col-span-1"><label className="label-tiny">訂金</label><input type="number" className="input-dark w-full" value={formData.deposit} onChange={e=>setFormData({...formData, deposit:e.target.value})}/></div>
                                         <div className="col-span-1"><label className="label-tiny">尾款</label><input type="number" className="input-dark w-full" value={formData.balance} onChange={e=>setFormData({...formData, balance:e.target.value})}/></div>
                                         <div className="col-span-1 md:col-span-1 flex items-end"><button onClick={handleSave} className="w-full bg-indigo-500 py-3 rounded-xl font-black text-xs text-white">確認儲存</button></div>
