@@ -2,12 +2,13 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工程帳務系統</title>
+    <meta name="viewport" content="width=1400">
+    <title>工程帳務系統-完整功能版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
@@ -30,27 +31,13 @@
     </script>
 
     <style>
-        body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; }
+        body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; min-width: 1400px; }
         .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; outline: none; font-size: 14px; }
         .label-tiny { font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; display: block; }
-        
-        /* 保持原本橫向排列，但在手機上允許水平滑動 */
-        .project-row { 
-            min-width: 1200px; /* 強制保持電腦版的寬度 */
-        }
-        .scroll-container {
-            overflow-x: auto; /* 手機版出現水平捲軸，不擠壓內容 */
-            -webkit-overflow-scrolling: touch;
-        }
-
-        select:disabled, input:disabled, textarea:disabled { 
-            cursor: not-allowed; 
-            opacity: 1 !important; 
-            color: #334155 !important;
-            -webkit-text-fill-color: #334155 !important;
-        }
-        .delete-btn { transition: all 0.2s; opacity: 0; }
+        select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; opacity: 1 !important; color: #334155 !important; -webkit-text-fill-color: #334155 !important; }
+        .project-row { min-width: 1300px; }
         .project-row:hover .delete-btn { opacity: 1; }
+        .delete-btn { transition: all 0.2s; opacity: 0; }
     </style>
 </head>
 <body>
@@ -64,7 +51,12 @@
             const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
             const [selectedType, setSelectedType] = useState('公司件'); 
             const [projects, setProjects] = useState([]);
-            const [formData, setFormData] = useState({ client: '', deposit: 0, balance: 0, orderDate: new Date().toISOString().split('T')[0], staff: '公司', note: '', receipt: '未繳', installDate: '', report: '' });
+            
+            const [formData, setFormData] = useState({ 
+                client: '', deposit: 0, balance: 0, 
+                orderDate: new Date().toISOString().split('T')[0], 
+                staff: '公司', note: '', receipt: '未繳', installDate: '', report: ''
+            });
 
             const getProjectStatus = (p) => {
                 if (p.report === '有狀況') return "⚠️ 有狀況";
@@ -93,6 +85,36 @@
                 });
             }, [projects, selectedMonth, selectedType]);
 
+            const exportToExcel = () => {
+                const data = filteredProjects.map(p => ({
+                    日期: p.orderDate,
+                    客戶: p.client,
+                    人員: p.staff,
+                    總額: Number(p.deposit) + Number(p.balance),
+                    訂金: p.deposit,
+                    訂金狀態: p.dStatus,
+                    工程狀態: getProjectStatus(p),
+                    尾款: p.balance,
+                    尾款狀態: p.bStatus,
+                    收據: p.receipt,
+                    施工日: p.installDate,
+                    備註: p.note
+                }));
+                const worksheet = XLSX.utils.json_to_sheet(data);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, `${selectedMonth}月帳務`);
+                XLSX.writeFile(workbook, `工程帳務_${selectedMonth}月_${selectedType}.xlsx`);
+            };
+
+            const handleSave = () => {
+                if (isBossMode) return;
+                if (!formData.client) return alert("請輸入客戶");
+                const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
+                const bStatus = Number(formData.balance) === 0 ? '無尾款' : '未繳';
+                window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType });
+                setFormData({ ...formData, client: '', deposit: 0, balance: 0, note: '', installDate: '', report: '', staff: '公司' });
+            };
+
             const updateField = (id, field, value) => {
                 if (isBossMode) return;
                 const updates = { [field]: value };
@@ -109,18 +131,10 @@
                 }
             };
 
-            const handleSave = () => {
-                if (isBossMode || !formData.client) return;
-                const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
-                const bStatus = Number(formData.balance) === 0 ? '無尾款' : '未繳';
-                window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType });
-                setFormData({ ...formData, client: '', deposit: 0, balance: 0, note: '', installDate: '', report: '' });
-            };
-
             return (
                 <div className="flex h-screen overflow-hidden">
                     <aside className="w-24 bg-[#0f172a] flex flex-col shrink-0">
-                        <div className="p-4 text-white font-black text-center border-b border-slate-800">2026</div>
+                        <div className="p-4 text-white font-black text-center border-b border-slate-800 font-mono">2026</div>
                         <div className="flex-1 overflow-y-auto p-2 space-y-1">
                             { [...Array(12).keys()].map(i => (
                                 <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`w-full py-3 rounded-lg font-bold text-xs ${selectedMonth===i+1?'bg-indigo-600 text-white shadow-lg':'text-slate-500'}`}>{i+1}月</button>
@@ -130,7 +144,13 @@
 
                     <main className="flex-1 flex flex-col bg-white overflow-hidden">
                         <header className="px-10 py-6 flex justify-between items-center shrink-0">
-                            <h1 className="text-3xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></h1>
+                            <div className="flex items-center gap-6">
+                                <h1 className="text-3xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></h1>
+                                <button onClick={exportToExcel} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md flex items-center gap-2">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                    匯出 EXCEL
+                                </button>
+                            </div>
                             <div className="flex bg-slate-100 p-1 rounded-xl">
                                 {['公司件', '業務件', '地板壁紙'].map(t => (
                                     <button key={t} onClick={()=>setSelectedType(t)} className={`px-6 py-2 rounded-lg font-black text-xs ${selectedType===t?'bg-white text-indigo-600 shadow-sm':'text-slate-400'}`}>{t}</button>
@@ -138,12 +158,12 @@
                             </div>
                         </header>
 
-                        <div className="flex-1 overflow-y-auto px-10 py-6 bg-slate-50 scroll-container">
+                        <div className="flex-1 overflow-auto px-10 py-6 space-y-8 bg-slate-50">
                             {!isBossMode && (
-                                <div className="bg-[#1e293b] p-8 rounded-[40px] shadow-2xl mb-8 project-row">
+                                <div className="bg-[#1e293b] p-8 rounded-[40px] shadow-2xl project-row">
                                     <div className="grid grid-cols-6 gap-4">
                                         <div className="col-span-1"><label className="label-tiny">ORDER DATE</label><input type="date" className="input-dark w-full" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
-                                        <div className="col-span-3"><label className="label-tiny">CLIENT NAME</label><input placeholder="客戶名稱" className="input-dark w-full" value={formData.client} onChange={e=>setFormData({...formData, client:e.target.value})}/></div>
+                                        <div className="col-span-3"><label className="label-tiny">CLIENT NAME</label><input placeholder="請輸入客戶名稱..." className="input-dark w-full" value={formData.client} onChange={e=>setFormData({...formData, client:e.target.value})}/></div>
                                         <div className="col-span-2"><label className="label-tiny">STAFF</label>
                                             <select className="input-dark w-full" value={formData.staff} onChange={e=>setFormData({...formData, staff:e.target.value})}>
                                                 <option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
@@ -152,8 +172,8 @@
                                         <div className="col-span-1"><label className="label-tiny">DEPOSIT</label><input type="number" className="input-dark w-full font-mono" value={formData.deposit} onChange={e=>setFormData({...formData, deposit:e.target.value})}/></div>
                                         <div className="col-span-1"><label className="label-tiny">BALANCE</label><input type="number" className="input-dark w-full font-mono" value={formData.balance} onChange={e=>setFormData({...formData, balance:e.target.value})}/></div>
                                         <div className="col-span-1"><label className="label-tiny">INSTALL DATE</label><input type="date" className="input-dark w-full" value={formData.installDate} onChange={e=>setFormData({...formData, installDate:e.target.value})}/></div>
-                                        <div className="col-span-2"><label className="label-tiny">REMARK</label><input placeholder="備註..." className="input-dark w-full" value={formData.note} onChange={e=>setFormData({...formData, note:e.target.value})}/></div>
-                                        <div className="col-span-1 flex items-end"><button onClick={handleSave} className="w-full bg-indigo-500 py-3 rounded-xl font-black text-xs text-white">儲存</button></div>
+                                        <div className="col-span-2"><label className="label-tiny">REMARK</label><input placeholder="備註內容..." className="input-dark w-full" value={formData.note} onChange={e=>setFormData({...formData, note:e.target.value})}/></div>
+                                        <div className="col-span-1 flex items-end"><button onClick={handleSave} className="w-full bg-indigo-500 py-3 rounded-xl font-black text-xs text-white shadow-lg">確認儲存</button></div>
                                     </div>
                                 </div>
                             )}
@@ -213,9 +233,7 @@
                                                 <textarea disabled={isBossMode} className="w-full h-20 bg-slate-50 rounded-2xl p-4 text-[11px] font-bold text-slate-500 outline-none border-none resize-none" placeholder="備註內容..." value={p.note} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} />
                                                 {!isBossMode && (
                                                     <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="delete-btn p-2 text-slate-300 hover:text-red-500">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                        </svg>
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                                     </button>
                                                 )}
                                             </div>
