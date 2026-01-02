@@ -35,6 +35,8 @@
         .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; outline: none; font-size: 14px; }
         .label-tiny { font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; display: block; }
         .custom-card { border-radius: 32px; transition: all 0.3s ease; }
+        /* 唯讀模式下讓下拉選單看起來不像可以按 */
+        select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; opacity: 0.8; }
     </style>
 </head>
 <body>
@@ -55,7 +57,6 @@
                 staff: '公司', note: '', receipt: '未繳', installDate: '', report: ''
             });
 
-            // 取得工程狀態邏輯 (保留最終版邏輯)
             const getProjectStatus = (p) => {
                 if (p.report === '有狀況') return "⚠️ 有狀況";
                 if (!p.installDate) return "待確認";
@@ -94,6 +95,7 @@
             };
 
             const handleSave = () => {
+                if (isBossMode) return; // 安全機制
                 if (!formData.client) return alert("請輸入客戶");
                 const pRef = window.fb.ref(window.fb.db, 'projects');
                 const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
@@ -103,6 +105,7 @@
             };
 
             const updateField = (id, field, value) => {
+                if (isBossMode) return; // 徹底防止老闆改動
                 const pRef = window.fb.ref(window.fb.db, `projects/${id}`);
                 window.fb.update(pRef, { [field]: value });
             };
@@ -121,7 +124,10 @@
                     <main className="flex-1 flex flex-col bg-white overflow-hidden">
                         <header className="px-10 py-6 flex justify-between items-center">
                             <div className="flex items-center gap-4">
-                                <h1 className="text-3xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></h1>
+                                <h1 className="text-3xl font-black text-slate-800">
+                                    {selectedMonth}月 <span className="text-indigo-600">{selectedType}</span>
+                                    {isBossMode && <span className="ml-4 text-xs bg-slate-200 text-slate-500 px-2 py-1 rounded">唯讀模式</span>}
+                                </h1>
                                 {!isBossMode && <button onClick={exportToExcel} className="bg-emerald-500 text-white px-4 py-1.5 rounded-xl text-xs font-black shadow-lg">📊 匯出 Excel</button>}
                             </div>
                             <div className="flex bg-slate-100 p-1 rounded-xl">
@@ -142,7 +148,7 @@
                                         <div className="col-span-1"><label className="label-tiny">BALANCE</label><input type="number" className="input-dark w-full font-mono" value={formData.balance} onChange={e=>setFormData({...formData, balance:e.target.value})}/></div>
                                         <div className="col-span-1"><label className="label-tiny">INSTALL DATE</label><input type="date" className="input-dark w-full" value={formData.installDate} onChange={e=>setFormData({...formData, installDate:e.target.value})}/></div>
                                         <div className="col-span-2"><label className="label-tiny">REMARK</label><input placeholder="備註內容..." className="input-dark w-full" value={formData.note} onChange={e=>setFormData({...formData, note:e.target.value})}/></div>
-                                        <div className="col-span-1 flex items-end"><button onClick={handleSave} className="w-full bg-indigo-500 py-3 rounded-xl font-black text-xs text-white shadow-lg">確認儲存{selectedType}</button></div>
+                                        <div className="col-span-1 flex items-end"><button onClick={handleSave} className="w-full bg-indigo-500 py-3 rounded-xl font-black text-xs text-white shadow-lg">確認儲存</button></div>
                                     </div>
                                 </div>
                             )}
@@ -167,7 +173,7 @@
                                             <div className="flex-[1.8] grid grid-cols-2 gap-x-8 gap-y-4 px-8 border-x border-slate-50">
                                                 <div>
                                                     <label className="text-[10px] font-black text-indigo-400 block mb-1">訂金狀態</label>
-                                                    <select className={`w-full text-xs font-bold rounded-xl px-4 py-2 border ${p.dStatus === '未繳' ? 'bg-red-50 text-red-500 border-red-100' : 'bg-slate-50 border-transparent text-slate-500'}`} value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
+                                                    <select disabled={isBossMode} className={`w-full text-xs font-bold rounded-xl px-4 py-2 border ${p.dStatus === '未繳' ? 'bg-red-50 text-red-500 border-red-100' : 'bg-slate-50 border-transparent text-slate-500'}`} value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
                                                         <option>未繳</option><option>已轉帳</option><option>已付現</option><option>無訂金</option>
                                                     </select>
                                                 </div>
@@ -179,13 +185,13 @@
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-black text-indigo-400 block mb-1">尾款狀態</label>
-                                                    <select className={`w-full text-xs font-bold rounded-xl px-4 py-2 border ${showBalanceWarning ? 'bg-red-50 text-red-500 border-red-100' : 'bg-slate-50 border-transparent text-slate-500'}`} value={p.bStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
+                                                    <select disabled={isBossMode} className={`w-full text-xs font-bold rounded-xl px-4 py-2 border ${showBalanceWarning ? 'bg-red-50 text-red-500 border-red-100' : 'bg-slate-50 border-transparent text-slate-500'}`} value={p.bStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
                                                         <option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>無尾款</option>
                                                     </select>
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-black text-orange-400 block mb-1">收據功能</label>
-                                                    <select className="w-full text-xs font-bold rounded-xl px-4 py-2 bg-orange-50 text-orange-600 border border-orange-100" value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
+                                                    <select disabled={isBossMode} className="w-full text-xs font-bold rounded-xl px-4 py-2 bg-orange-50 text-orange-600 border border-orange-100" value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
                                                         <option>未繳</option><option>已繳交</option><option>訊息確認</option><option>發票</option><option>免收據</option><option>安裝後補</option>
                                                     </select>
                                                 </div>
@@ -193,14 +199,16 @@
 
                                             <div className="w-56 px-8 flex flex-col gap-2">
                                                 <label className="text-[10px] font-black text-indigo-400 block">安裝日期</label>
-                                                <input type="date" className="w-full bg-slate-50 rounded-xl px-3 py-2 text-xs font-bold" value={p.installDate} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
-                                                <button onClick={()=>updateField(p.firebaseId, 'report', p.report==='有狀況'?'':'有狀況')} className={`text-[9px] font-black py-1 rounded-md border ${p.report === '有狀況' ? 'bg-amber-500 text-white' : 'text-slate-300 border-slate-200'}`}>
-                                                    {p.report === '有狀況' ? '解除狀況' : '標記狀況'}
-                                                </button>
+                                                <input disabled={isBossMode} type="date" className="w-full bg-slate-50 rounded-xl px-3 py-2 text-xs font-bold" value={p.installDate} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
+                                                {!isBossMode && (
+                                                    <button onClick={()=>updateField(p.firebaseId, 'report', p.report==='有狀況'?'':'有狀況')} className={`text-[9px] font-black py-1 rounded-md border ${p.report === '有狀況' ? 'bg-amber-500 text-white' : 'text-slate-300 border-slate-200'}`}>
+                                                        {p.report === '有狀況' ? '解除狀況' : '標記狀況'}
+                                                    </button>
+                                                )}
                                             </div>
 
                                             <div className="flex-1">
-                                                <textarea className="w-full h-20 bg-slate-50 rounded-2xl p-4 text-[11px] font-bold text-slate-500 outline-none border-none resize-none" placeholder="備註內容..." value={p.note} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} />
+                                                <textarea disabled={isBossMode} className="w-full h-20 bg-slate-50 rounded-2xl p-4 text-[11px] font-bold text-slate-500 outline-none border-none resize-none" placeholder="備註內容..." value={p.note} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} />
                                             </div>
                                         </div>
                                     );
