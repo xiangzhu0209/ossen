@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工程帳務-雲端最終版(含Excel)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getDatabase, ref, onValue, push, update } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyD9g8PjN39YeiR302NUbh5t--OZ5FnqS0A",
+            authDomain: "ossen-fe1ac.firebaseapp.com",
+            projectId: "ossen-fe1ac",
+            storageBucket: "ossen-fe1ac.firebasestorage.app",
+            messagingSenderId: "504652484858",
+            appId: "1:504652484858:web:0c1a847d2e24b67e5f7943",
+            measurementId: "G-Q52V0B3940",
+            databaseURL: "https://ossen-fe1ac-default-rtdb.firebaseio.com/"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        window.fb = { db, ref, onValue, push, update };
+    </script>
+
+    <style>
+        body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f1f5f9; }
+        .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; outline: none; width: 100%; font-size: 14px; }
+        .boss-card { border-left: 8px solid #6366f1 !important; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        function App() {
+            const isBossMode = new URLSearchParams(window.location.search).get('mode') === 'boss';
+            const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+            const [selectedType, setSelectedType] = useState('公司件'); 
+            const [projects, setProjects] = useState([]);
+            const [formData, setFormData] = useState({ 
+                client: '', deposit: 0, balance: 0, 
+                orderDate: new Date().toISOString().split('T')[0], 
+                staff: '公司', note: '', receipt: '未繳', installDate: '', report: ''
+            });
+
+            useEffect(() => {
+                if (!window.fb) return;
+                const pRef = window.fb.ref(window.fb.db, 'projects');
+                window.fb.onValue(pRef, (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        const list = Object.keys(data).map(key => ({ ...data[key], firebaseId: key }));
+                        setProjects(list.reverse()); 
+                    } else { setProjects([]); }
+                });
+            }, []);
+
+            const filteredProjects = useMemo(() => {
+                return projects.filter(p => {
+                    const month = new Date(p.orderDate).getMonth() + 1;
+                    return month === selectedMonth && p.type === selectedType;
+                });
+            }, [projects, selectedMonth, selectedType]);
+
+            // 算薪水專用 Excel 匯出功能
+            const exportExcel = () => {
+                if (filteredProjects.length === 0) return alert("無資料可匯出");
+                const data = filteredProjects.map(p => ({
+                    "日期": p.orderDate,
+                    "客戶名稱": p.client,
+                    "負責人": p.staff,
+                    "總金額": Number(p.deposit) + Number(p.balance),
+                    "訂金": p.deposit,
+                    "尾款": p.balance,
+                    "收據狀態": p.receipt,
+                    "備註": p.note
+                }));
+                const ws = XLSX.utils.json_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "工程薪水帳目");
+                XLSX.writeFile(wb, `ossen_薪水報表_${selectedMonth}月_${selectedType}.xlsx`);
+            };
+
+            const handleSave = () => {
+                if (!formData.client) return alert("請輸入客戶名稱");
+                const pRef = window.fb.ref(window.fb.db, 'projects');
+                window.fb.push(pRef, { ...formData, type: selectedType });
+                setFormData({ ...formData, client: '', deposit: 0, balance: 0, note: '', installDate: '' });
+            };
+
+            const updateField = (id, field, value) => {
+                const pRef = window.fb.ref(window.fb.db, `projects/${id}`);
+                window.fb.update(pRef, { [field]: value });
+            };
+
+            return (
+                <div className="flex h-screen overflow-hidden">
+                    <aside className="w-16 bg-slate-900 flex flex-col shrink-0 custom-scrollbar overflow-y-auto">
+                        { [...Array(12).keys()].map(i => (
+                            <button key={i+1} onClick={()=>setSelectedMonth(i+1)} 
+                                className={`py-4 text-xs font-bold transition-all ${selectedMonth===i+1?'bg-indigo-600 text-white':'text-slate-500 hover:text-white'}`}>
+                                {i+1}月
+                            </button>
+                        ))}
+                    </aside>
+
+                    <main className="flex-1 flex flex-col overflow-hidden bg-white">
+                        <header className="px-6 py-4 border-b flex justify-between items-center bg-white shadow-sm z-10">
+                            <div className="flex items-center gap-4">
+                                <h1 className="text-2xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></h1>
+                                {/* 保留您的 Excel 匯出功能，但老闆模式下隱藏 */}
+                                {!isBossMode && (
+                                    <button onClick={exportExcel} className="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black transition-all">📊 匯出 Excel (算薪水用)</button>
+                                )}
+                            </div>
+                            <div className="flex bg-slate-100 p-1 rounded-xl">
+                                {['公司件', '業務件', '地板壁紙'].map(t => (
+                                    <button key={t} onClick={()=>setSelectedType(t)} 
+                                        className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all ${selectedType===t?'bg-white shadow text-indigo-600':'text-slate-400'}`}>
+                                        {t}
+                                    </button>
+                                ))}
+                            </div>
+                        </header>
+
+                        <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                            {!isBossMode && (
+                                <div className="bg-[#1e293b] p-8 rounded-[32px] shadow-xl space-y-4">
+                                    <div className="grid grid-cols-4 gap-3">
+                                        <input type="date" className="input-dark" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/>
+                                        <input placeholder="客戶名稱" className="input-dark col-span-2" value={formData.client} onChange={e=>setFormData({...formData, client:e.target.value})}/>
+                                        <select className="input-dark" value={formData.staff} onChange={e=>setFormData({...formData, staff:e.target.value})}><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option></select>
+                                    </div>
+                                    <div className="grid grid-cols-4 gap-3">
+                                        <input type="number" placeholder="訂金" className="input-dark" value={formData.deposit} onChange={e=>setFormData({...formData, deposit:e.target.value})}/>
+                                        <input type="number" placeholder="尾款" className="input-dark" value={formData.balance} onChange={e=>setFormData({...formData, balance:e.target.value})}/>
+                                        <input type="date" className="input-dark" value={formData.installDate} onChange={e=>setFormData({...formData, installDate:e.target.value})}/>
+                                        <button onClick={handleSave} className="bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl font-black shadow-lg transition-all text-sm">儲存案件 (同步至雲端)</button>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="space-y-4">
+                                {filteredProjects.map(p => (
+                                    <div key={p.firebaseId} className={`bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 ${isBossMode ? 'boss-card' : ''}`}>
+                                        <div className="w-64">
+                                            {/* 日期字體加大 */}
+                                            <p className="text-sm font-bold text-slate-400 font-mono mb-1">{p.orderDate}</p>
+                                            <h2 className="text-2xl font-black text-slate-800 leading-tight">{p.client}</h2>
+                                            <span className="mt-2 inline-block bg-slate-100 px-3 py-1 rounded-lg text-[10px] font-black text-indigo-500 uppercase">{p.staff}</span>
+                                        </div>
+
+                                        <div className="flex-1">
+                                            <p className="text-4xl font-black text-slate-900 font-mono">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</p>
+                                            {/* 訂金尾款展示 */}
+                                            <p className="text-sm font-bold text-red-500 mt-1">訂金 {p.deposit} / 尾款 {p.balance}</p>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-4 w-full md:w-80">
+                                            <div className="bg-orange-50 p-3 rounded-2xl">
+                                                <label className="text-[10px] font-black text-orange-400 block mb-1">收據功能</label>
+                                                {isBossMode ? (
+                                                    <p className="text-xs font-black text-orange-600">{p.receipt}</p>
+                                                ) : (
+                                                    <select className="w-full bg-transparent text-xs font-black text-orange-600 outline-none" value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
+                                                        <option>未繳</option><option>已繳交</option><option>訊息確認</option><option>發票</option><option>免收據</option><option>安裝後補</option>
+                                                    </select>
+                                                )}
+                                            </div>
+                                            <div className="bg-indigo-50 p-3 rounded-2xl">
+                                                <label className="text-[10px] font-black text-indigo-400 block mb-1">安裝日期</label>
+                                                {isBossMode ? (
+                                                    <p className="text-xs font-black text-indigo-600">{p.installDate || '待確認'}</p>
+                                                ) : (
+                                                    <input type="date" className="w-full bg-transparent text-xs font-black text-indigo-600 outline-none" value={p.installDate} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {!isBossMode && (
+                                            <div className="w-full md:w-64">
+                                                <textarea className="w-full h-16 bg-slate-50 rounded-2xl p-3 text-[11px] font-bold text-slate-500 outline-none border-none resize-none" placeholder="備註..." value={p.note} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} />
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
