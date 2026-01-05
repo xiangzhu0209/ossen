@@ -36,10 +36,10 @@
         .label-tiny { font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; display: block; }
         select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; opacity: 1 !important; color: #334155 !important; -webkit-text-fill-color: #334155 !important; }
         .project-row { min-width: 1300px; }
-        .project-row:hover .delete-btn { opacity: 1; }
-        .delete-btn { transition: all 0.2s; opacity: 0; }
-        /* 鎖屏樣式 */
+        .project-row:hover .delete-btn, .project-row:hover .edit-btn { opacity: 1; }
+        .delete-btn, .edit-btn { transition: all 0.2s; opacity: 0; cursor: pointer; }
         .lock-screen { background: radial-gradient(circle at center, #1e293b, #0f172a); }
+        .modal-overlay { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
     </style>
 </head>
 <body>
@@ -48,14 +48,12 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-       function App() {
-            // --- 密碼保護邏輯 (加強版) ---
+        function App() {
             const [isLocked, setIsLocked] = useState(true);
             const [password, setPassword] = useState("");
             const CORRECT_PASSWORD = "45688123"; 
 
             const handleLogin = () => {
-                // 使用 .toString() 並 trim() 去除可能的空白，確保萬無一失
                 if (password.toString().trim() === CORRECT_PASSWORD) {
                     setIsLocked(false);
                 } else {
@@ -64,14 +62,15 @@
                 }
             };
             
-            // ... 其餘邏輯不變
-
-            // --- 原有系統邏輯 ---
             const isBossMode = new URLSearchParams(window.location.search).get('mode') === 'boss';
             const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
             const [selectedType, setSelectedType] = useState('公司件'); 
+            const [selectedStaff, setSelectedStaff] = useState('全部人員'); // 一鍵篩選負責人狀態
             const [projects, setProjects] = useState([]);
+            const [editingId, setEditingId] = useState(null); // 控制哪一筆正在編輯
             
+            const [modal, setModal] = useState({ show: false, title: '', content: '' });
+
             const [formData, setFormData] = useState({ 
                 client: '', deposit: 0, balance: 0, 
                 orderDate: new Date().toISOString().split('T')[0], 
@@ -98,27 +97,41 @@
                 });
             }, []);
 
+            // 結合月份、類別、負責人的篩選邏輯
             const filteredProjects = useMemo(() => {
                 return projects.filter(p => {
                     const month = new Date(p.orderDate).getMonth() + 1;
-                    return month === selectedMonth && p.type === selectedType;
+                    const matchesMonthAndType = month === selectedMonth && p.type === selectedType;
+                    const matchesStaff = selectedStaff === '全部人員' || p.staff === selectedStaff;
+                    return matchesMonthAndType && matchesStaff;
                 });
-            }, [projects, selectedMonth, selectedType]);
+            }, [projects, selectedMonth, selectedType, selectedStaff]);
+
+            // 抓取名單邏輯
+            const fetchUnpaidList = (type) => {
+                let content = "";
+                const list = filteredProjects;
+                
+                if (type === 'deposit') {
+                    const targets = list.filter(p => p.dStatus === '未繳');
+                    content = targets.map(p => `${p.client} ($${p.deposit})`).join('\n');
+                    setModal({ show: true, title: '未繳訂金名單', content: content || '目前無資料' });
+                } else if (type === 'balance') {
+                    const targets = list.filter(p => p.bStatus === '未繳');
+                    content = targets.map(p => `${p.client} ($${p.balance})`).join('\n');
+                    setModal({ show: true, title: '未繳尾款名單', content: content || '目前無資料' });
+                } else if (type === 'receipt') {
+                    const targets = list.filter(p => p.receipt === '未繳');
+                    content = targets.map(p => `${p.client}`).join('\n');
+                    setModal({ show: true, title: '未繳收據名單', content: content || '目前無資料' });
+                }
+            };
 
             const exportToExcel = () => {
                 const data = filteredProjects.map(p => ({
-                    日期: p.orderDate,
-                    客戶: p.client,
-                    人員: p.staff,
-                    總額: Number(p.deposit) + Number(p.balance),
-                    訂金: p.deposit,
-                    訂金狀態: p.dStatus,
-                    工程狀態: getProjectStatus(p),
-                    尾款: p.balance,
-                    尾款狀態: p.bStatus,
-                    收據: p.receipt,
-                    施工日: p.installDate,
-                    備註: p.note
+                    日期: p.orderDate, 客戶: p.client, 人員: p.staff, 總額: Number(p.deposit) + Number(p.balance),
+                    訂金: p.deposit, 訂金狀態: p.dStatus, 工程狀態: getProjectStatus(p), 尾款: p.balance,
+                    尾款狀態: p.bStatus, 收據: p.receipt, 施工日: p.installDate, 備註: p.note
                 }));
                 const worksheet = XLSX.utils.json_to_sheet(data);
                 const workbook = XLSX.utils.book_new();
@@ -138,10 +151,8 @@
             const updateField = (id, field, value) => {
                 if (isBossMode) return;
                 const updates = { [field]: value };
-                if (field === 'deposit' && Number(value) === 0) updates.dStatus = '無訂金';
-                if (field === 'deposit' && Number(value) > 0) updates.dStatus = '未繳';
-                if (field === 'balance' && Number(value) === 0) updates.bStatus = '無尾款';
-                if (field === 'balance' && Number(value) > 0) updates.bStatus = '未繳';
+                if (field === 'deposit') updates.dStatus = Number(value) === 0 ? '無訂金' : '未繳';
+                if (field === 'balance') updates.bStatus = Number(value) === 0 ? '無尾款' : '未繳';
                 window.fb.update(window.fb.ref(window.fb.db, `projects/${id}`), updates);
             };
 
@@ -151,7 +162,6 @@
                 }
             };
 
-            // --- 如果被鎖住，顯示登入畫面 ---
             if (isLocked) {
                 return (
                     <div className="h-screen w-screen flex items-center justify-center lock-screen">
@@ -165,28 +175,31 @@
                                 <h2 className="text-white text-2xl font-black tracking-widest">OSSEN SYSTEM</h2>
                                 <p className="text-slate-400 text-xs mt-2 font-bold uppercase">請輸入訪問密碼</p>
                             </div>
-                            <input 
-                                type="password" 
-                                className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl py-4 px-6 text-white text-center text-2xl tracking-[1em] focus:ring-2 focus:ring-indigo-500 outline-none mb-6"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                                autoFocus
-                            />
-                            <button 
-                                onClick={handleLogin}
-                                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 rounded-2xl transition-all shadow-lg active:scale-95"
-                            >
-                                認證進入
-                            </button>
+                            <input type="password" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl py-4 px-6 text-white text-center text-2xl tracking-[1em] focus:ring-2 focus:ring-indigo-500 outline-none mb-6" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} autoFocus />
+                            <button onClick={handleLogin} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 rounded-2xl transition-all shadow-lg active:scale-95">認證進入</button>
                         </div>
                     </div>
                 );
             }
 
-            // --- 原本的主畫面代碼 ---
             return (
                 <div className="flex h-screen overflow-hidden">
+                    {/* 彈窗元件 */}
+                    {modal.show && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center modal-overlay p-4">
+                            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden">
+                                <div className="bg-slate-800 p-6 text-white flex justify-between items-center">
+                                    <h3 className="font-black tracking-widest">{modal.title}</h3>
+                                    <button onClick={()=>setModal({...modal, show:false})} className="text-slate-400 hover:text-white">✕</button>
+                                </div>
+                                <div className="p-8">
+                                    <textarea readOnly className="w-full h-64 bg-slate-50 rounded-xl p-4 font-bold text-slate-700 outline-none resize-none" value={modal.content}></textarea>
+                                    <button onClick={()=> {navigator.clipboard.writeText(modal.content); alert('已複製名單');}} className="w-full mt-4 bg-indigo-600 text-white py-3 rounded-xl font-black text-sm">複製名單</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     <aside className="w-24 bg-[#0f172a] flex flex-col shrink-0">
                         <div className="p-4 text-white font-black text-center border-b border-slate-800 font-mono">2026</div>
                         <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -197,14 +210,23 @@
                     </aside>
 
                     <main className="flex-1 flex flex-col bg-white overflow-hidden">
-                        <header className="px-10 py-6 flex justify-between items-center shrink-0">
-                            <div className="flex items-center gap-6">
+                        <header className="px-10 py-6 flex justify-between items-center shrink-0 border-b">
+                            <div className="flex items-center gap-4">
                                 <h1 className="text-3xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></h1>
-                                <button onClick={exportToExcel} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md flex items-center gap-2">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                                    匯出 EXCEL
-                                </button>
+                                {/* 一鍵篩選負責人 */}
+                                <select className="bg-slate-100 border-none rounded-xl px-4 py-2 text-xs font-black text-slate-600 outline-none" value={selectedStaff} onChange={e=>setSelectedStaff(e.target.value)}>
+                                    <option>全部人員</option><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
+                                </select>
                             </div>
+
+                            <div className="flex gap-2">
+                                <button onClick={()=>fetchUnpaidList('deposit')} className="bg-red-50 text-red-600 border border-red-100 px-4 py-2 rounded-xl text-[11px] font-black hover:bg-red-100 transition-colors">未繳訂金名單</button>
+                                <button onClick={()=>fetchUnpaidList('balance')} className="bg-red-50 text-red-600 border border-red-100 px-4 py-2 rounded-xl text-[11px] font-black hover:bg-red-100 transition-colors">未繳尾款名單</button>
+                                <button onClick={()=>fetchUnpaidList('receipt')} className="bg-orange-50 text-orange-600 border border-orange-100 px-4 py-2 rounded-xl text-[11px] font-black hover:bg-orange-100 transition-colors">未繳收據名單</button>
+                                <div className="w-px bg-slate-200 mx-2"></div>
+                                <button onClick={exportToExcel} className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md flex items-center gap-2">匯出 EXCEL</button>
+                            </div>
+
                             <div className="flex bg-slate-100 p-1 rounded-xl">
                                 {['公司件', '業務件', '地板壁紙'].map(t => (
                                     <button key={t} onClick={()=>setSelectedType(t)} className={`px-6 py-2 rounded-lg font-black text-xs ${selectedType===t?'bg-white text-indigo-600 shadow-sm':'text-slate-400'}`}>{t}</button>
@@ -235,23 +257,47 @@
                             <div className="space-y-4 pb-20">
                                 {filteredProjects.map(p => {
                                     const status = getProjectStatus(p);
+                                    const isEditing = editingId === p.firebaseId;
+
                                     return (
-                                        <div key={p.firebaseId} className="project-row bg-white rounded-[32px] p-8 border border-slate-100 shadow-sm flex items-center relative">
-                                            <div className="w-60">
-                                                <p className="text-sm font-bold text-slate-400 font-mono mb-1">{p.orderDate}</p>
-                                                <h3 className="text-2xl font-black text-slate-800 leading-tight">{p.client}</h3>
-                                                <span className="mt-2 inline-block bg-slate-100 px-3 py-1 rounded-lg text-[10px] font-black text-indigo-500 uppercase">{p.staff}</span>
+                                        <div key={p.firebaseId} className="project-row bg-white rounded-[32px] p-8 border border-slate-100 shadow-sm flex items-center relative transition-all hover:shadow-md">
+                                            <div className="w-64 flex items-center gap-4">
+                                                {!isBossMode && (
+                                                    <button onClick={()=>setEditingId(isEditing ? null : p.firebaseId)} className={`edit-btn p-2 rounded-lg ${isEditing ? 'text-indigo-600 bg-indigo-50' : 'text-slate-300 hover:text-indigo-500'}`}>
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                    </button>
+                                                )}
+                                                <div>
+                                                    {isEditing ? (
+                                                        <input className="border-b-2 border-indigo-400 font-black text-lg w-full outline-none" value={p.client} onChange={e=>updateField(p.firebaseId, 'client', e.target.value)} />
+                                                    ) : (
+                                                        <React.Fragment>
+                                                            <p className="text-sm font-bold text-slate-400 font-mono mb-1">{p.orderDate}</p>
+                                                            <h3 className="text-2xl font-black text-slate-800 leading-tight">{p.client}</h3>
+                                                            <span className="mt-2 inline-block bg-slate-100 px-3 py-1 rounded-lg text-[10px] font-black text-indigo-500 uppercase">{p.staff}</span>
+                                                        </React.Fragment>
+                                                    )}
+                                                </div>
                                             </div>
 
                                             <div className="flex-1 px-8">
-                                                <p className="text-4xl font-black text-slate-800 font-mono">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</p>
-                                                <p className="text-sm font-bold text-red-500 mt-1 uppercase font-black">訂金 {p.deposit} / 尾款 {p.balance}</p>
+                                                {isEditing ? (
+                                                    <div className="flex gap-2">
+                                                        <div className="flex-1"><label className="text-[10px] block font-bold text-slate-400">訂金</label><input type="number" className="w-full border rounded p-1 font-mono" value={p.deposit} onChange={e=>updateField(p.firebaseId, 'deposit', e.target.value)} /></div>
+                                                        <div className="flex-1"><label className="text-[10px] block font-bold text-slate-400">尾款</label><input type="number" className="w-full border rounded p-1 font-mono" value={p.balance} onChange={e=>updateField(p.firebaseId, 'balance', e.target.value)} /></div>
+                                                    </div>
+                                                ) : (
+                                                    <React.Fragment>
+                                                        <p className="text-4xl font-black text-slate-800 font-mono">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</p>
+                                                        <p className="text-sm font-bold text-red-500 mt-1 uppercase font-black">訂金 {p.deposit} / 尾款 {p.balance}</p>
+                                                    </React.Fragment>
+                                                )}
                                             </div>
 
                                             <div className="flex-[1.5] grid grid-cols-2 gap-x-8 gap-y-4 px-8 border-x border-slate-50">
                                                 <div>
                                                     <label className="text-[10px] font-black text-indigo-400 block mb-1">訂金狀態</label>
-                                                    <select disabled={isBossMode} className="w-full text-xs font-bold rounded-xl px-4 py-2 bg-slate-50" value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
+                                                    <select disabled={isBossMode} className={`w-full text-xs font-bold rounded-xl px-4 py-2 ${p.dStatus==='未繳'?'bg-red-50 text-red-600':'bg-slate-50 text-slate-600'}`} value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
                                                         <option>未繳</option><option>已轉帳</option><option>已付現</option><option>無訂金</option>
                                                     </select>
                                                 </div>
@@ -261,13 +307,13 @@
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-black text-indigo-400 block mb-1">尾款狀態</label>
-                                                    <select disabled={isBossMode} className="w-full text-xs font-bold rounded-xl px-4 py-2 bg-slate-50" value={p.bStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
+                                                    <select disabled={isBossMode} className={`w-full text-xs font-bold rounded-xl px-4 py-2 ${p.bStatus==='未繳'?'bg-red-50 text-red-600':'bg-slate-50 text-slate-600'}`} value={p.bStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
                                                         <option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>無尾款</option>
                                                     </select>
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-black text-orange-400 block mb-1">收據功能</label>
-                                                    <select disabled={isBossMode} className="w-full text-xs font-bold rounded-xl px-4 py-2 bg-orange-50 text-orange-600" value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
+                                                    <select disabled={isBossMode} className={`w-full text-xs font-bold rounded-xl px-4 py-2 ${p.receipt==='未繳'?'bg-orange-100 text-orange-700':'bg-orange-50 text-orange-600'}`} value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
                                                         <option>未繳</option><option>已繳交</option><option>訊息確認</option><option>發票</option><option>免收據</option><option>安裝後補</option>
                                                     </select>
                                                 </div>
@@ -306,4 +352,3 @@
     </script>
 </body>
 </html>
-
