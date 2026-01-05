@@ -48,20 +48,23 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        function App() {
-            // --- 密碼保護邏輯 ---
+       function App() {
+            // --- 密碼保護邏輯 (加強版) ---
             const [isLocked, setIsLocked] = useState(true);
             const [password, setPassword] = useState("");
             const CORRECT_PASSWORD = "45688123"; 
 
             const handleLogin = () => {
-                if (password === CORRECT_PASSWORD) {
+                // 使用 .toString() 並 trim() 去除可能的空白，確保萬無一失
+                if (password.toString().trim() === CORRECT_PASSWORD) {
                     setIsLocked(false);
                 } else {
-                    alert("密碼錯誤！");
+                    alert("密碼錯誤！您輸入的是: " + password);
                     setPassword("");
                 }
             };
+            
+            // ... 其餘邏輯不變
 
             // --- 原有系統邏輯 ---
             const isBossMode = new URLSearchParams(window.location.search).get('mode') === 'boss';
@@ -303,3 +306,4 @@
     </script>
 </body>
 </html>
+
