@@ -83,7 +83,7 @@
                 return today >= install ? "完工" : "正常";
             };
 
-            // 判斷尾款狀態的輔助函式
+            // 判斷尾款狀態的輔助函式 (已依要求修改)
             const determineBalanceStatus = (balance, installDate) => {
                 if (Number(balance) === 0) return '無尾款';
                 if (!installDate) return '未完成';
@@ -91,6 +91,7 @@
                 const today = new Date(); today.setHours(0,0,0,0);
                 const install = new Date(installDate); install.setHours(0,0,0,0);
                 
+                // 若安裝日未到 (today < install)，預設為 '未完成' 而不是 '未繳'
                 return today >= install ? '未繳' : '未完成';
             };
 
