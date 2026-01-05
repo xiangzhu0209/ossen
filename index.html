@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=1400">
-    <title>工程帳務系統-安全版</title>
+    <title>工程帳務系統-安全加密版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -38,6 +38,8 @@
         .project-row { min-width: 1300px; }
         .project-row:hover .delete-btn { opacity: 1; }
         .delete-btn { transition: all 0.2s; opacity: 0; }
+        /* 鎖屏樣式 */
+        .lock-screen { background: radial-gradient(circle at center, #1e293b, #0f172a); }
     </style>
 </head>
 <body>
@@ -46,15 +48,23 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // --- 密碼設定處 ---
-        const ADMIN_PWD = "0209"; // 您的密碼
-        const BOSS_PWD = "45688123";  // 給老闆的密碼
-
         function App() {
+            // --- 密碼保護邏輯 ---
+            const [isLocked, setIsLocked] = useState(true);
+            const [password, setPassword] = useState("");
+            const CORRECT_PASSWORD = "45688123"; 
+
+            const handleLogin = () => {
+                if (password === CORRECT_PASSWORD) {
+                    setIsLocked(false);
+                } else {
+                    alert("密碼錯誤！");
+                    setPassword("");
+                }
+            };
+
+            // --- 原有系統邏輯 ---
             const isBossMode = new URLSearchParams(window.location.search).get('mode') === 'boss';
-            const [isLoggedIn, setIsLoggedIn] = useState(false);
-            const [pwdInput, setPwdInput] = useState("");
-            
             const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
             const [selectedType, setSelectedType] = useState('公司件'); 
             const [projects, setProjects] = useState([]);
@@ -65,17 +75,6 @@
                 staff: '公司', note: '', receipt: '未繳', installDate: '', report: ''
             });
 
-            // 登入檢查
-            const handleLogin = () => {
-                const targetPwd = isBossMode ? BOSS_PWD : ADMIN_PWD;
-                if (pwdInput === targetPwd) {
-                    setIsLoggedIn(true);
-                } else {
-                    alert("密碼錯誤！");
-                    setPwdInput("");
-                }
-            };
-
             const getProjectStatus = (p) => {
                 if (p.report === '有狀況') return "⚠️ 有狀況";
                 if (!p.installDate) return "待確認";
@@ -85,7 +84,7 @@
             };
 
             useEffect(() => {
-                if (!window.fb || !isLoggedIn) return;
+                if (!window.fb) return;
                 const pRef = window.fb.ref(window.fb.db, 'projects');
                 window.fb.onValue(pRef, (snapshot) => {
                     const data = snapshot.val();
@@ -94,7 +93,7 @@
                         setProjects(list.reverse()); 
                     } else { setProjects([]); }
                 });
-            }, [isLoggedIn]);
+            }, []);
 
             const filteredProjects = useMemo(() => {
                 return projects.filter(p => {
@@ -105,12 +104,18 @@
 
             const exportToExcel = () => {
                 const data = filteredProjects.map(p => ({
-                    日期: p.orderDate, 客戶: p.client, 人員: p.staff,
+                    日期: p.orderDate,
+                    客戶: p.client,
+                    人員: p.staff,
                     總額: Number(p.deposit) + Number(p.balance),
-                    訂金: p.deposit, 訂金狀態: p.dStatus,
+                    訂金: p.deposit,
+                    訂金狀態: p.dStatus,
                     工程狀態: getProjectStatus(p),
-                    尾款: p.balance, 尾款狀態: p.bStatus,
-                    收據: p.receipt, 施工日: p.installDate, 備註: p.note
+                    尾款: p.balance,
+                    尾款狀態: p.bStatus,
+                    收據: p.receipt,
+                    施工日: p.installDate,
+                    備註: p.note
                 }));
                 const worksheet = XLSX.utils.json_to_sheet(data);
                 const workbook = XLSX.utils.book_new();
@@ -143,27 +148,40 @@
                 }
             };
 
-            // 尚未登入的畫面
-            if (!isLoggedIn) {
+            // --- 如果被鎖住，顯示登入畫面 ---
+            if (isLocked) {
                 return (
-                    <div className="flex h-screen items-center justify-center bg-slate-900">
-                        <div className="bg-white p-10 rounded-[40px] shadow-2xl text-center w-96">
-                            <h2 className="text-2xl font-black mb-6 text-slate-800">{isBossMode ? '老闆模式登入' : '管理員登入'}</h2>
+                    <div className="h-screen w-screen flex items-center justify-center lock-screen">
+                        <div className="bg-white/10 backdrop-blur-xl p-10 rounded-[40px] shadow-2xl border border-white/20 text-center w-[400px]">
+                            <div className="mb-6">
+                                <div className="bg-indigo-500 w-16 h-16 rounded-2xl mx-auto flex items-center justify-center shadow-lg mb-4">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                    </svg>
+                                </div>
+                                <h2 className="text-white text-2xl font-black tracking-widest">OSSEN SYSTEM</h2>
+                                <p className="text-slate-400 text-xs mt-2 font-bold uppercase">請輸入訪問密碼</p>
+                            </div>
                             <input 
                                 type="password" 
-                                className="w-full p-4 rounded-2xl bg-slate-100 border-none outline-none text-center text-2xl tracking-[10px] mb-6" 
-                                placeholder="****"
-                                value={pwdInput}
-                                onChange={(e)=>setPwdInput(e.target.value)}
-                                onKeyDown={(e)=> e.key === 'Enter' && handleLogin()}
+                                className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl py-4 px-6 text-white text-center text-2xl tracking-[1em] focus:ring-2 focus:ring-indigo-500 outline-none mb-6"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                                autoFocus
                             />
-                            <button onClick={handleLogin} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black text-lg shadow-lg hover:bg-indigo-700 transition-all">進入系統</button>
+                            <button 
+                                onClick={handleLogin}
+                                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 rounded-2xl transition-all shadow-lg active:scale-95"
+                            >
+                                認證進入
+                            </button>
                         </div>
                     </div>
                 );
             }
 
-            // 正式系統畫面 (原封不動)
+            // --- 原本的主畫面代碼 ---
             return (
                 <div className="flex h-screen overflow-hidden">
                     <aside className="w-24 bg-[#0f172a] flex flex-col shrink-0">
