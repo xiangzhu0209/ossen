@@ -38,7 +38,6 @@
         .project-row { min-width: 1300px; }
         .project-row:hover .delete-btn { opacity: 1; }
         .delete-btn { transition: all 0.2s; opacity: 0; }
-        /* 鎖屏樣式 */
         .lock-screen { background: radial-gradient(circle at center, #1e293b, #0f172a); }
     </style>
 </head>
@@ -49,7 +48,6 @@
         const { useState, useEffect, useMemo } = React;
 
        function App() {
-            // --- 密碼保護邏輯 (加強版) ---
             const [isLocked, setIsLocked] = useState(true);
             const [password, setPassword] = useState("");
             const CORRECT_PASSWORD = "45688123"; 
@@ -63,7 +61,6 @@
                 }
             };
             
-            // --- 原有系統邏輯 ---
             const isBossMode = new URLSearchParams(window.location.search).get('mode') === 'boss';
             const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
             const [selectedType, setSelectedType] = useState('公司件'); 
@@ -75,15 +72,21 @@
                 staff: '公司', note: '', receipt: '未繳', installDate: '', report: ''
             });
 
+            // 修改工程狀態判定邏輯
             const getProjectStatus = (p) => {
                 if (p.report === '有狀況') return "⚠️ 有狀況";
                 if (!p.installDate) return "待確認";
                 const today = new Date(); today.setHours(0,0,0,0);
                 const install = new Date(p.installDate); install.setHours(0,0,0,0);
-                return today >= install ? "完工" : "正常";
+                
+                if (today >= install) {
+                    return "完工";
+                } else {
+                    return "製作中"; // 原為 "正常"，依要求改為 "製作中"
+                }
             };
 
-            // 判斷尾款狀態的輔助函式 (已依要求修改)
+            // 修改尾款狀態判定邏輯
             const determineBalanceStatus = (balance, installDate) => {
                 if (Number(balance) === 0) return '無尾款';
                 if (!installDate) return '未完成';
@@ -91,7 +94,7 @@
                 const today = new Date(); today.setHours(0,0,0,0);
                 const install = new Date(installDate); install.setHours(0,0,0,0);
                 
-                // 若安裝日未到 (today < install)，預設為 '未完成' 而不是 '未繳'
+                // 只有今天大於等於安裝日，才顯示未繳，否則一律為未完成
                 return today >= install ? '未繳' : '未完成';
             };
 
@@ -150,19 +153,16 @@
                 if (isBossMode) return;
                 const updates = { [field]: value };
                 
-                // 當修改訂金時自動變更訂金狀態
                 if (field === 'deposit') {
                     updates.dStatus = Number(value) === 0 ? '無訂金' : '未繳';
                 }
 
-                // 當修改尾款金額或安裝日期時，自動判定尾款狀態
                 if (field === 'balance' || field === 'installDate') {
                     const targetProject = projects.find(p => p.firebaseId === id);
                     const currentBalance = field === 'balance' ? value : targetProject.balance;
                     const currentInstallDate = field === 'installDate' ? value : targetProject.installDate;
                     
-                    // 只有在目前狀態是 '未繳' 或 '未完成' 或 '無尾款' 的情況下才自動切換
-                    // 如果已經手動選了 '已付現' 等，就不自動覆蓋
+                    // 修改：只要變動到金額或日期，就重新跑判定邏輯，除非已經是手動改過的狀態
                     if (['未繳', '未完成', '無尾款'].includes(targetProject.bStatus) || field === 'balance') {
                         updates.bStatus = determineBalanceStatus(currentBalance, currentInstallDate);
                     }
@@ -177,7 +177,6 @@
                 }
             };
 
-            // --- 如果被鎖住，顯示登入畫面 ---
             if (isLocked) {
                 return (
                     <div className="h-screen w-screen flex items-center justify-center lock-screen">
@@ -210,7 +209,6 @@
                 );
             }
 
-            // --- 原本的主畫面代碼 ---
             return (
                 <div className="flex h-screen overflow-hidden">
                     <aside className="w-24 bg-[#0f172a] flex flex-col shrink-0">
@@ -283,7 +281,7 @@
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-black text-emerald-400 block mb-1">工程狀態</label>
-                                                    <div className={`text-center py-2 rounded-xl text-xs font-black text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : 'bg-blue-500'}`}>{status}</div>
+                                                    <div className={`text-center py-2 rounded-xl text-xs font-black text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : status === '製作中' ? 'bg-blue-500' : 'bg-slate-400'}`}>{status}</div>
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-black text-indigo-400 block mb-1">尾款狀態</label>
