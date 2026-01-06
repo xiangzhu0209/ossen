@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -114,7 +113,11 @@
                 });
             }, [projects, selectedMonth, selectedType, filterStaff]);
 
-            // --- 修正後的未繳抓取功能 ---
+            // 計算當前顯示清單的業績總額
+            const totalRevenue = useMemo(() => {
+                return filteredProjects.reduce((sum, p) => sum + (Number(p.deposit) || 0) + (Number(p.balance) || 0), 0);
+            }, [filteredProjects]);
+
             const checkUnpaid = (type) => {
                 let list = [];
                 const today = new Date(); 
@@ -124,7 +127,6 @@
                     list = projects.filter(p => p.dStatus === '未繳').map(p => `${p.client}: $${p.deposit}`);
                     alert(list.length > 0 ? "【訂金未繳名單】\n" + list.join('\n') : "目前無未繳訂金");
                 } else if (type === 'balance') {
-                    // 修正邏輯：必須 bStatus 為 '未繳' 且 installDate 已到期 (<=今天)
                     list = projects.filter(p => {
                         if (p.bStatus !== '未繳') return false;
                         if (!p.installDate) return false;
@@ -153,7 +155,19 @@
                 } else {
                     window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType });
                 }
-                setFormData({ client: '', deposit: 0, balance: 0, orderDate: new Date().toISOString().split('T')[0], note: '', installDate: '', report: '', staff: '公司', receipt: '未繳' });
+                // 修改處：保留 orderDate，其餘清空
+                setFormData(prev => ({ 
+                    ...prev,
+                    client: '', 
+                    deposit: 0, 
+                    balance: 0, 
+                    note: '', 
+                    installDate: '', 
+                    report: '', 
+                    staff: '公司', 
+                    receipt: '未繳' 
+                    // 不重置 orderDate
+                }));
             };
 
             const startEdit = (p) => {
@@ -207,7 +221,14 @@
                     <main className="flex-1 flex flex-col bg-white overflow-hidden">
                         <header className="px-10 py-4 flex justify-between items-center shrink-0 border-b">
                             <div className="flex items-center gap-4">
-                                <h1 className="text-2xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></h1>
+                                <h1 className="text-2xl font-black text-slate-800">
+                                    {selectedMonth}月 <span className="text-indigo-600">{selectedType}</span>
+                                </h1>
+                                {/* 業績總額顯示區 */}
+                                <div className="bg-indigo-50 px-4 py-2 rounded-2xl border border-indigo-100 ml-2">
+                                    <span className="text-[10px] font-black text-indigo-400 block uppercase leading-none mb-1">當月業績總額 ({filterStaff})</span>
+                                    <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
+                                </div>
                                 <div className="flex gap-2 ml-4">
                                     <button onClick={()=>checkUnpaid('deposit')} className="bg-rose-500 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold">1.訂金未繳</button>
                                     <button onClick={()=>checkUnpaid('balance')} className="bg-rose-500 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold">2.尾款未繳</button>
