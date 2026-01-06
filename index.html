@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -39,7 +40,6 @@
         .project-row:hover .delete-btn { opacity: 1; }
         .delete-btn { transition: all 0.2s; opacity: 0; }
         .lock-screen { background: radial-gradient(circle at center, #1e293b, #0f172a); }
-        /* 縮小下方顯示的樣式 */
         .compact-row { padding: 12px 20px !important; border-radius: 16px !important; margin-bottom: 8px !important; }
     </style>
 </head>
@@ -66,9 +66,9 @@
             const isBossMode = new URLSearchParams(window.location.search).get('mode') === 'boss';
             const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
             const [selectedType, setSelectedType] = useState('公司件'); 
-            const [filterStaff, setFilterStaff] = useState('全部'); // 篩選功能
+            const [filterStaff, setFilterStaff] = useState('全部');
             const [projects, setProjects] = useState([]);
-            const [editingId, setEditingId] = useState(null); // 用於修改功能
+            const [editingId, setEditingId] = useState(null);
             
             const [formData, setFormData] = useState({ 
                 client: '', deposit: 0, balance: 0, 
@@ -114,15 +114,26 @@
                 });
             }, [projects, selectedMonth, selectedType, filterStaff]);
 
-            // 未繳抓取功能
+            // --- 修正後的未繳抓取功能 ---
             const checkUnpaid = (type) => {
                 let list = [];
+                const today = new Date(); 
+                today.setHours(0,0,0,0);
+
                 if (type === 'deposit') {
                     list = projects.filter(p => p.dStatus === '未繳').map(p => `${p.client}: $${p.deposit}`);
                     alert(list.length > 0 ? "【訂金未繳名單】\n" + list.join('\n') : "目前無未繳訂金");
                 } else if (type === 'balance') {
-                    list = projects.filter(p => p.bStatus === '未繳').map(p => `${p.client}: $${p.balance}`);
-                    alert(list.length > 0 ? "【尾款未繳名單】\n" + list.join('\n') : "目前無未繳尾款");
+                    // 修正邏輯：必須 bStatus 為 '未繳' 且 installDate 已到期 (<=今天)
+                    list = projects.filter(p => {
+                        if (p.bStatus !== '未繳') return false;
+                        if (!p.installDate) return false;
+                        const install = new Date(p.installDate);
+                        install.setHours(0,0,0,0);
+                        return today >= install;
+                    }).map(p => `${p.client}: $${p.balance} (安裝日: ${p.installDate})`);
+                    
+                    alert(list.length > 0 ? "【尾款未繳名單 (已完工)】\n" + list.join('\n') : "目前無已完工之未繳尾款");
                 } else if (type === 'receipt') {
                     list = projects.filter(p => p.receipt === '未繳').map(p => p.client);
                     alert(list.length > 0 ? "【收據未繳名單】\n" + list.join('\n') : "目前無未繳收據");
