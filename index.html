@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=1400">
-    <title>工程帳務系統-備註加強版</title>
+    <title>工程帳務系統-自動校正版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -71,6 +71,7 @@
             const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
             const [selectedType, setSelectedType] = useState('公司件'); 
             const [filterStaff, setFilterStaff] = useState('全部');
+            const [sortOption, setSortOption] = useState('date-desc');
             const [projects, setProjects] = useState([]);
             const [editingId, setEditingId] = useState(null);
             
@@ -95,6 +96,17 @@
                 const install = new Date(installDate); install.setHours(0,0,0,0);
                 return today >= install ? '未繳' : '未完成';
             };
+            
+            // 新增：顯示邏輯校正
+            // 如果資料庫存的是"未完成"，但日期已經過了，強制顯示為"未繳"
+            const getDisplayBStatus = (p) => {
+                if (p.bStatus === '未完成' && p.installDate) {
+                    const today = new Date(); today.setHours(0,0,0,0);
+                    const install = new Date(p.installDate); install.setHours(0,0,0,0);
+                    if (today >= install) return '未繳';
+                }
+                return p.bStatus;
+            };
 
             useEffect(() => {
                 if (!window.fb) return;
@@ -108,19 +120,38 @@
                 });
             }, []);
 
-            const filteredProjects = useMemo(() => {
-                return projects.filter(p => {
+            const filteredAndSortedProjects = useMemo(() => {
+                let result = projects.filter(p => {
                     const month = new Date(p.orderDate).getMonth() + 1;
                     const matchMonth = month === selectedMonth;
                     const matchType = p.type === selectedType;
                     const matchStaff = filterStaff === '全部' || p.staff === filterStaff;
                     return matchMonth && matchType && matchStaff;
                 });
-            }, [projects, selectedMonth, selectedType, filterStaff]);
+
+                result.sort((a, b) => {
+                    if (sortOption === 'date-desc') {
+                        return new Date(b.orderDate) - new Date(a.orderDate);
+                    } else if (sortOption === 'date-asc') {
+                        return new Date(a.orderDate) - new Date(b.orderDate);
+                    } else if (sortOption === 'amount-desc') {
+                        const totalA = (Number(a.deposit) || 0) + (Number(a.balance) || 0);
+                        const totalB = (Number(b.deposit) || 0) + (Number(b.balance) || 0);
+                        return totalB - totalA;
+                    } else if (sortOption === 'amount-asc') {
+                        const totalA = (Number(a.deposit) || 0) + (Number(a.balance) || 0);
+                        const totalB = (Number(b.deposit) || 0) + (Number(b.balance) || 0);
+                        return totalA - totalB;
+                    }
+                    return 0;
+                });
+
+                return result;
+            }, [projects, selectedMonth, selectedType, filterStaff, sortOption]);
 
             const totalRevenue = useMemo(() => {
-                return filteredProjects.reduce((sum, p) => sum + (Number(p.deposit) || 0) + (Number(p.balance) || 0), 0);
-            }, [filteredProjects]);
+                return filteredAndSortedProjects.reduce((sum, p) => sum + (Number(p.deposit) || 0) + (Number(p.balance) || 0), 0);
+            }, [filteredAndSortedProjects]);
 
             const checkUnpaid = (type) => {
                 let list = [];
@@ -131,12 +162,10 @@
                     list = projects.filter(p => p.dStatus === '未繳').map(p => `${p.client}: $${p.deposit}`);
                     alert(list.length > 0 ? "【訂金未繳名單】\n" + list.join('\n') : "目前無未繳訂金");
                 } else if (type === 'balance') {
+                    // 這裡也使用顯示邏輯來判斷
                     list = projects.filter(p => {
-                        if (p.bStatus !== '未繳') return false;
-                        if (!p.installDate) return false;
-                        const install = new Date(p.installDate);
-                        install.setHours(0,0,0,0);
-                        return today >= install;
+                        const status = getDisplayBStatus(p);
+                        return status === '未繳';
                     }).map(p => `${p.client}: $${p.balance} (安裝日: ${p.installDate})`);
                     
                     alert(list.length > 0 ? "【尾款未繳名單 (已完工)】\n" + list.join('\n') : "目前無已完工之未繳尾款");
@@ -160,22 +189,28 @@
                     window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType });
                 }
                 
-                setFormData(prev => ({ 
-                    ...prev,
-                    client: '', 
-                    deposit: 0, 
-                    balance: 0, 
-                    note: '', // 清空備註
-                    installDate: '', 
-                    report: '', 
-                    staff: '公司', 
-                    receipt: '未繳' 
-                }));
+                setFormData({ 
+                    client: '', deposit: 0, balance: 0, 
+                    orderDate: new Date().toISOString().split('T')[0], 
+                    staff: '公司', note: '', receipt: '未繳', installDate: '', report: '' 
+                });
             };
 
             const startEdit = (p) => {
                 setEditingId(p.firebaseId);
-                setFormData({ note: '', ...p }); // 確保 note 有預設值
+                setFormData({ note: '', ...p });
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            const handleDuplicate = (p) => {
+                setEditingId(null);
+                setFormData({
+                    ...p,
+                    client: `${p.client} (副本)`,
+                    orderDate: new Date().toISOString().split('T')[0],
+                    note: p.note || '',
+                    firebaseId: undefined
+                });
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             };
 
@@ -239,7 +274,17 @@
                             </div>
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center bg-slate-100 rounded-xl p-1 px-3">
-                                    <span className="text-[10px] font-black text-slate-400 mr-2">負責人篩選:</span>
+                                    <span className="text-[10px] font-black text-slate-400 mr-2">排序:</span>
+                                    <select className="bg-transparent text-xs font-black outline-none" value={sortOption} onChange={e=>setSortOption(e.target.value)}>
+                                        <option value="date-desc">日期：新 → 舊</option>
+                                        <option value="date-asc">日期：舊 → 新</option>
+                                        <option value="amount-desc">金額：高 → 低</option>
+                                        <option value="amount-asc">金額：低 → 高</option>
+                                    </select>
+                                </div>
+
+                                <div className="flex items-center bg-slate-100 rounded-xl p-1 px-3">
+                                    <span className="text-[10px] font-black text-slate-400 mr-2">負責人:</span>
                                     <select className="bg-transparent text-xs font-black outline-none" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
                                         <option>全部</option><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
                                     </select>
@@ -255,11 +300,9 @@
                         <div className="flex-1 overflow-auto px-10 py-6 bg-slate-50">
                             {!isBossMode && (
                                 <div className="bg-[#1e293b] p-6 rounded-[30px] shadow-xl mb-8 project-row">
-                                    {/* 修改 Grid 佈局以容納備註 */}
                                     <div className="grid grid-cols-10 gap-3">
                                         <div className="col-span-1"><label className="label-tiny">日期</label><input type="date" className="input-dark w-full py-2" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
                                         <div className="col-span-2"><label className="label-tiny">客戶名稱 {editingId && "(修改中)"}</label><input className="input-dark w-full py-2" value={formData.client} onChange={e=>setFormData({...formData, client:e.target.value})}/></div>
-                                        {/* 新增備註輸入 */}
                                         <div className="col-span-2"><label className="label-tiny">備註事項</label><input className="input-dark w-full py-2" placeholder="備註..." value={formData.note} onChange={e=>setFormData({...formData, note:e.target.value})}/></div>
                                         <div className="col-span-1"><label className="label-tiny">人員</label>
                                             <select className="input-dark w-full py-2" value={formData.staff} onChange={e=>setFormData({...formData, staff:e.target.value})}>
@@ -278,8 +321,11 @@
                             )}
 
                             <div className="space-y-2 pb-20">
-                                {filteredProjects.map(p => {
+                                {filteredAndSortedProjects.map(p => {
                                     const status = getProjectStatus(p);
+                                    // 使用顯示邏輯來決定尾款狀態
+                                    const displayBStatus = getDisplayBStatus(p);
+
                                     return (
                                         <div key={p.firebaseId} className="project-row compact-row bg-white border border-slate-100 shadow-sm flex items-center relative">
                                             <div className="w-48">
@@ -293,7 +339,6 @@
                                                 <p className="text-[10px] text-slate-400 font-bold">訂{p.deposit} / 尾{p.balance}</p>
                                             </div>
 
-                                            {/* 新增：列表中的備註欄位 */}
                                             <div className="w-40 px-2 border-l border-slate-100">
                                                 <label className="text-[9px] font-black text-slate-400 block mb-1">備註</label>
                                                 <input disabled={isBossMode} className="w-full bg-slate-50 text-xs text-slate-600 rounded p-1 outline-none border border-transparent focus:border-indigo-300 transition-colors" value={p.note || ''} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} placeholder="..." />
@@ -302,7 +347,6 @@
                                             <div className="flex-1 grid grid-cols-4 gap-4 border-x border-slate-50 px-6">
                                                 <div>
                                                     <label className="text-[9px] font-black text-indigo-400 block">訂金狀態</label>
-                                                    {/* 若狀態為未繳，加入 status-unpaid 樣式 */}
                                                     <select disabled={isBossMode} className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${p.dStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
                                                         <option>未繳</option><option>已轉帳</option><option>已付現</option><option>無訂金</option>
                                                     </select>
@@ -313,8 +357,8 @@
                                                 </div>
                                                 <div>
                                                     <label className="text-[9px] font-black text-indigo-400 block">尾款狀態</label>
-                                                    {/* 若狀態為未繳，加入 status-unpaid 樣式 */}
-                                                    <select disabled={isBossMode} className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${p.bStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={p.bStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
+                                                    {/* 使用 displayBStatus 來控制顏色和選單顯示 */}
+                                                    <select disabled={isBossMode} className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${displayBStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={displayBStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
                                                         <option>未完成</option><option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>無尾款</option>
                                                     </select>
                                                 </div>
@@ -329,7 +373,6 @@
                                             <div className="w-64 px-6 flex items-center gap-3">
                                                 <div className="flex-1">
                                                     <label className="text-[9px] font-black text-slate-400 block">安裝日</label>
-                                                    {/* 若無日期，加入 date-missing 樣式 */}
                                                     <input disabled={isBossMode} type="date" className={`w-full rounded-lg px-2 py-1 text-[11px] font-bold ${!p.installDate ? 'date-missing' : 'bg-slate-50'}`} value={p.installDate} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
                                                 </div>
                                                 <button onClick={()=>updateField(p.firebaseId, 'report', p.report==='有狀況'?'':'有狀況')} className={`px-2 py-1 rounded-lg text-[9px] font-black border ${p.report === '有狀況' ? 'bg-amber-500 text-white' : 'text-slate-300 border-slate-200'}`}>
@@ -340,6 +383,11 @@
                                             <div className="w-48 flex gap-2 justify-end">
                                                 {!isBossMode && (
                                                     <React.Fragment>
+                                                        <button onClick={()=>handleDuplicate(p)} className="p-2 text-slate-300 hover:text-green-500" title="複製此訂單">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                            </svg>
+                                                        </button>
                                                         <button onClick={()=>startEdit(p)} className="p-2 text-indigo-400 hover:text-indigo-600" title="修改內容">
                                                             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                                         </button>
