@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=1400">
-    <title>工程帳務系統-自動校正版</title>
+    <title>工程帳務系統-強力篩選版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -75,6 +75,9 @@
             const [projects, setProjects] = useState([]);
             const [editingId, setEditingId] = useState(null);
             
+            // 新增：狀態篩選 (all, deposit, balance, receipt)
+            const [filterStatus, setFilterStatus] = useState('all');
+
             const [formData, setFormData] = useState({ 
                 client: '', deposit: 0, balance: 0, 
                 orderDate: new Date().toISOString().split('T')[0], 
@@ -97,8 +100,7 @@
                 return today >= install ? '未繳' : '未完成';
             };
             
-            // 新增：顯示邏輯校正
-            // 如果資料庫存的是"未完成"，但日期已經過了，強制顯示為"未繳"
+            // 自動顯示邏輯
             const getDisplayBStatus = (p) => {
                 if (p.bStatus === '未完成' && p.installDate) {
                     const today = new Date(); today.setHours(0,0,0,0);
@@ -122,13 +124,30 @@
 
             const filteredAndSortedProjects = useMemo(() => {
                 let result = projects.filter(p => {
+                    // 1. 基礎篩選 (月份、類型、人員)
                     const month = new Date(p.orderDate).getMonth() + 1;
                     const matchMonth = month === selectedMonth;
                     const matchType = p.type === selectedType;
                     const matchStaff = filterStaff === '全部' || p.staff === filterStaff;
-                    return matchMonth && matchType && matchStaff;
+                    
+                    if (!matchMonth || !matchType || !matchStaff) return false;
+
+                    // 2. 特殊狀態篩選 (訂金、尾款、收據)
+                    if (filterStatus === 'deposit') {
+                        return p.dStatus === '未繳';
+                    }
+                    if (filterStatus === 'balance') {
+                        // 使用顯示邏輯來篩選
+                        return getDisplayBStatus(p) === '未繳';
+                    }
+                    if (filterStatus === 'receipt') {
+                        return p.receipt === '未繳';
+                    }
+
+                    return true;
                 });
 
+                // 排序
                 result.sort((a, b) => {
                     if (sortOption === 'date-desc') {
                         return new Date(b.orderDate) - new Date(a.orderDate);
@@ -147,33 +166,11 @@
                 });
 
                 return result;
-            }, [projects, selectedMonth, selectedType, filterStaff, sortOption]);
+            }, [projects, selectedMonth, selectedType, filterStaff, sortOption, filterStatus]);
 
             const totalRevenue = useMemo(() => {
                 return filteredAndSortedProjects.reduce((sum, p) => sum + (Number(p.deposit) || 0) + (Number(p.balance) || 0), 0);
             }, [filteredAndSortedProjects]);
-
-            const checkUnpaid = (type) => {
-                let list = [];
-                const today = new Date(); 
-                today.setHours(0,0,0,0);
-
-                if (type === 'deposit') {
-                    list = projects.filter(p => p.dStatus === '未繳').map(p => `${p.client}: $${p.deposit}`);
-                    alert(list.length > 0 ? "【訂金未繳名單】\n" + list.join('\n') : "目前無未繳訂金");
-                } else if (type === 'balance') {
-                    // 這裡也使用顯示邏輯來判斷
-                    list = projects.filter(p => {
-                        const status = getDisplayBStatus(p);
-                        return status === '未繳';
-                    }).map(p => `${p.client}: $${p.balance} (安裝日: ${p.installDate})`);
-                    
-                    alert(list.length > 0 ? "【尾款未繳名單 (已完工)】\n" + list.join('\n') : "目前無已完工之未繳尾款");
-                } else if (type === 'receipt') {
-                    list = projects.filter(p => p.receipt === '未繳').map(p => p.client);
-                    alert(list.length > 0 ? "【收據未繳名單】\n" + list.join('\n') : "目前無未繳收據");
-                }
-            };
 
             const handleSave = () => {
                 if (isBossMode) return;
@@ -267,9 +264,19 @@
                                     <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
                                 </div>
                                 <div className="flex gap-2 ml-4">
-                                    <button onClick={()=>checkUnpaid('deposit')} className="bg-rose-500 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold">1.訂金未繳</button>
-                                    <button onClick={()=>checkUnpaid('balance')} className="bg-rose-500 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold">2.尾款未繳</button>
-                                    <button onClick={()=>checkUnpaid('receipt')} className="bg-orange-500 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold">3.收據未繳</button>
+                                    {/* 篩選按鈕區 */}
+                                    <button onClick={()=>setFilterStatus('all')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-200 text-slate-500'}`}>
+                                        全部顯示
+                                    </button>
+                                    <button onClick={()=>setFilterStatus('deposit')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>
+                                        只看欠訂金
+                                    </button>
+                                    <button onClick={()=>setFilterStatus('balance')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>
+                                        只看欠尾款
+                                    </button>
+                                    <button onClick={()=>setFilterStatus('receipt')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>
+                                        只看欠收據
+                                    </button>
                                 </div>
                             </div>
                             <div className="flex items-center gap-4">
