@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=1400">
-    <title>工程帳務系統-強力篩選版</title>
+    <title>工程帳務系統-邏輯修正版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -75,7 +75,6 @@
             const [projects, setProjects] = useState([]);
             const [editingId, setEditingId] = useState(null);
             
-            // 新增：狀態篩選 (all, deposit, balance, receipt)
             const [filterStatus, setFilterStatus] = useState('all');
 
             const [formData, setFormData] = useState({ 
@@ -100,8 +99,14 @@
                 return today >= install ? '未繳' : '未完成';
             };
             
-            // 自動顯示邏輯
+            // 自動顯示邏輯 (修正版)
             const getDisplayBStatus = (p) => {
+                // 1. 如果有狀況，絕對不自動跳轉，保持原樣
+                if (p.report === '有狀況') {
+                    return p.bStatus;
+                }
+
+                // 2. 只有沒狀況的時候，才檢查日期
                 if (p.bStatus === '未完成' && p.installDate) {
                     const today = new Date(); today.setHours(0,0,0,0);
                     const install = new Date(p.installDate); install.setHours(0,0,0,0);
@@ -124,7 +129,7 @@
 
             const filteredAndSortedProjects = useMemo(() => {
                 let result = projects.filter(p => {
-                    // 1. 基礎篩選 (月份、類型、人員)
+                    // 1. 基礎篩選
                     const month = new Date(p.orderDate).getMonth() + 1;
                     const matchMonth = month === selectedMonth;
                     const matchType = p.type === selectedType;
@@ -132,12 +137,12 @@
                     
                     if (!matchMonth || !matchType || !matchStaff) return false;
 
-                    // 2. 特殊狀態篩選 (訂金、尾款、收據)
+                    // 2. 特殊狀態篩選
                     if (filterStatus === 'deposit') {
                         return p.dStatus === '未繳';
                     }
                     if (filterStatus === 'balance') {
-                        // 使用顯示邏輯來篩選
+                        // 使用修正後的邏輯來篩選
                         return getDisplayBStatus(p) === '未繳';
                     }
                     if (filterStatus === 'receipt') {
@@ -264,7 +269,6 @@
                                     <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
                                 </div>
                                 <div className="flex gap-2 ml-4">
-                                    {/* 篩選按鈕區 */}
                                     <button onClick={()=>setFilterStatus('all')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-200 text-slate-500'}`}>
                                         全部顯示
                                     </button>
