@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=1400">
-    <title>工程帳務系統-搜尋匯出版</title>
+    <title>工程帳務系統-最終完整版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -41,9 +41,7 @@
         .lock-screen { background: radial-gradient(circle at center, #1e293b, #0f172a); }
         .compact-row { padding: 12px 20px !important; border-radius: 16px !important; margin-bottom: 8px !important; }
         
-        /* 針對未繳狀態的特別樣式 */
         .status-unpaid { background-color: #e11d48 !important; color: white !important; border: 1px solid #be123c !important; }
-        /* 針對未填日期的特別樣式 */
         .date-missing { background-color: #ffe4e6 !important; border: 2px solid #f43f5e !important; color: #881337 !important; }
     </style>
 </head>
@@ -75,9 +73,8 @@
             const [projects, setProjects] = useState([]);
             const [editingId, setEditingId] = useState(null);
             
-            // 新增搜尋狀態
+            // 搜尋狀態
             const [searchTerm, setSearchTerm] = useState("");
-            
             const [filterStatus, setFilterStatus] = useState('all');
 
             const [formData, setFormData] = useState({ 
@@ -94,28 +91,36 @@
                 return today >= install ? "完工" : "製作中";
             };
 
-            // 核心邏輯修正：加入 report 參數
+            // 存檔用的邏輯
             const determineBalanceStatus = (balance, installDate, report) => {
-                // 如果有狀況，強制狀態為未完成（不變紅）
                 if (report === '有狀況') return '未完成';
-                
                 if (Number(balance) === 0) return '無尾款';
                 if (!installDate) return '未完成';
-                
                 const today = new Date(); today.setHours(0,0,0,0);
                 const install = new Date(installDate); install.setHours(0,0,0,0);
                 return today >= install ? '未繳' : '未完成';
             };
             
-            // 顯示用的狀態邏輯 (保持與寫入邏輯一致)
+            // 顯示用的邏輯 (自動判斷)
             const getDisplayBStatus = (p) => {
-                // 如果是舊數據沒有寫入正確狀態，這裡做即時運算顯示
-                // 但原則上我們會依賴資料庫存的 bStatus
-                // 為了安全起見，如果資料庫狀態和計算邏輯衝突，且有狀況，優先顯示未完成
-                if (p.report === '有狀況' && p.bStatus === '未繳') {
-                    return '未完成';
+                // 1. 如果有狀況，強制顯示「未完成」(保護機制)
+                if (p.report === '有狀況') return '未完成';
+
+                // 2. 如果使用者手動選了「已付款」類的狀態，就遵照使用者的選擇
+                const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款'];
+                if (paidStatuses.includes(p.bStatus)) {
+                    return p.bStatus;
                 }
-                return p.bStatus;
+
+                // 3. 自動判斷：如果是「未完成」或「未繳」，根據今天日期決定
+                if (p.installDate) {
+                    const today = new Date(); today.setHours(0,0,0,0);
+                    const install = new Date(p.installDate); install.setHours(0,0,0,0);
+                    // 只要「今天 >= 安裝日」，就自動顯示「未繳」
+                    return today >= install ? '未繳' : '未完成';
+                }
+
+                return '未完成';
             };
 
             useEffect(() => {
@@ -150,8 +155,14 @@
 
                     // 2. 特殊狀態篩選
                     if (filterStatus === 'deposit') return p.dStatus === '未繳';
+                    
+                    // 修正：篩選時也要用顯示邏輯
                     if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
+                    
                     if (filterStatus === 'receipt') return p.receipt === '未繳';
+
+                    // ★★★ 新增：有狀況篩選 ★★★
+                    if (filterStatus === 'report') return p.report === '有狀況';
 
                     return true;
                 });
@@ -177,7 +188,6 @@
                 if (!formData.client) return alert("請輸入客戶");
                 
                 const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
-                // 修正：存檔時加入 report 判斷
                 const bStatus = determineBalanceStatus(formData.balance, formData.installDate, formData.report);
                 
                 if (editingId) {
@@ -221,15 +231,10 @@
                     updates.dStatus = Number(value) === 0 ? '無訂金' : '未繳';
                 }
 
-                // 修正：當更新 尾款、安裝日、或狀況 時，重新計算尾款狀態
                 if (['balance', 'installDate', 'report'].includes(field)) {
                     const curB = field === 'balance' ? value : target.balance;
                     const curI = field === 'installDate' ? value : target.installDate;
-                    
-                    // 這裡要特別處理 report，因為傳進來的 value 可能是 '有狀況' 或 ''
-                    // 如果 field 是 report，用 value，否則用原本的 target.report
                     const curR = field === 'report' ? value : target.report;
-                    
                     updates.bStatus = determineBalanceStatus(curB, curI, curR);
                 }
                 
@@ -242,9 +247,7 @@
                 }
             };
 
-            // Excel 匯出功能
             const handleExportExcel = () => {
-                // 1. 準備資料，依照要求的欄位格式
                 const dataToExport = filteredAndSortedProjects.map(p => ({
                     '日期': p.orderDate,
                     '案名客戶名': p.client,
@@ -257,19 +260,8 @@
                     return;
                 }
 
-                // 2. 建立工作表
                 const ws = XLSX.utils.json_to_sheet(dataToExport);
-                
-                // 3. 調整欄寬 (選用，讓畫面好看一點)
-                const wscols = [
-                    {wch: 15}, // 日期
-                    {wch: 30}, // 客戶
-                    {wch: 10}, // 負責人
-                    {wch: 15}  // 總額
-                ];
-                ws['!cols'] = wscols;
-
-                // 4. 建立活頁簿並下載
+                ws['!cols'] = [{wch: 15}, {wch: 30}, {wch: 10}, {wch: 15}];
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, "報表");
                 XLSX.writeFile(wb, `${selectedMonth}月_${selectedType}_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -310,7 +302,6 @@
                                         <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
                                     </div>
                                 </div>
-                                {/* 搜尋與篩選列 */}
                                 <div className="flex items-center gap-2 mt-1">
                                     <div className="relative">
                                         <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none">
@@ -324,6 +315,9 @@
                                     <button onClick={()=>setFilterStatus('deposit')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠訂金</button>
                                     <button onClick={()=>setFilterStatus('balance')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠尾款</button>
                                     <button onClick={()=>setFilterStatus('receipt')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>欠收據</button>
+                                    
+                                    {/* 新增的「有狀況」按鈕 */}
+                                    <button onClick={()=>setFilterStatus('report')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white shadow-md ring-2 ring-amber-300' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`}>有狀況</button>
                                 </div>
                             </div>
 
