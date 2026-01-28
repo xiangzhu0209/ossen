@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=1400">
-    <title>工程帳務系統-最終完整版</title>
+    <title>工程帳務系統-日期記憶版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -73,7 +73,6 @@
             const [projects, setProjects] = useState([]);
             const [editingId, setEditingId] = useState(null);
             
-            // 搜尋狀態
             const [searchTerm, setSearchTerm] = useState("");
             const [filterStatus, setFilterStatus] = useState('all');
 
@@ -91,7 +90,6 @@
                 return today >= install ? "完工" : "製作中";
             };
 
-            // 存檔用的邏輯
             const determineBalanceStatus = (balance, installDate, report) => {
                 if (report === '有狀況') return '未完成';
                 if (Number(balance) === 0) return '無尾款';
@@ -101,25 +99,17 @@
                 return today >= install ? '未繳' : '未完成';
             };
             
-            // 顯示用的邏輯 (自動判斷)
             const getDisplayBStatus = (p) => {
-                // 1. 如果有狀況，強制顯示「未完成」(保護機制)
                 if (p.report === '有狀況') return '未完成';
-
-                // 2. 如果使用者手動選了「已付款」類的狀態，就遵照使用者的選擇
                 const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款'];
                 if (paidStatuses.includes(p.bStatus)) {
                     return p.bStatus;
                 }
-
-                // 3. 自動判斷：如果是「未完成」或「未繳」，根據今天日期決定
                 if (p.installDate) {
                     const today = new Date(); today.setHours(0,0,0,0);
                     const install = new Date(p.installDate); install.setHours(0,0,0,0);
-                    // 只要「今天 >= 安裝日」，就自動顯示「未繳」
                     return today >= install ? '未繳' : '未完成';
                 }
-
                 return '未完成';
             };
 
@@ -155,13 +145,8 @@
 
                     // 2. 特殊狀態篩選
                     if (filterStatus === 'deposit') return p.dStatus === '未繳';
-                    
-                    // 修正：篩選時也要用顯示邏輯
                     if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
-                    
                     if (filterStatus === 'receipt') return p.receipt === '未繳';
-
-                    // ★★★ 新增：有狀況篩選 ★★★
                     if (filterStatus === 'report') return p.report === '有狀況';
 
                     return true;
@@ -197,9 +182,12 @@
                     window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType });
                 }
                 
+                // ★★★ 修正這裡：保留當前輸入的日期，不重置回今天 ★★★
+                const preservedDate = formData.orderDate;
+
                 setFormData({ 
                     client: '', deposit: 0, balance: 0, 
-                    orderDate: new Date().toISOString().split('T')[0], 
+                    orderDate: preservedDate, // 使用保留的日期
                     staff: '公司', note: '', receipt: '未繳', installDate: '', report: '' 
                 });
             };
@@ -316,7 +304,6 @@
                                     <button onClick={()=>setFilterStatus('balance')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠尾款</button>
                                     <button onClick={()=>setFilterStatus('receipt')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>欠收據</button>
                                     
-                                    {/* 新增的「有狀況」按鈕 */}
                                     <button onClick={()=>setFilterStatus('report')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white shadow-md ring-2 ring-amber-300' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`}>有狀況</button>
                                 </div>
                             </div>
