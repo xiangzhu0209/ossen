@@ -3,17 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工程帳務系統-暴力抓取版</title>
+    <title>OSSEN 系統診斷工具</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getDatabase, ref, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+        import { getDatabase, ref, onValue, get, child } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
+        // 您的原始設定
         const firebaseConfig = {
             apiKey: "AIzaSyD9g8PjN39YeiR302NUbh5t--OZ5FnqS0A",
             authDomain: "ossen-fe1ac.firebaseapp.com",
@@ -25,91 +25,123 @@
             databaseURL: "https://ossen-fe1ac-default-rtdb.firebaseio.com/"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const db = getDatabase(app);
-        window.fb = { db, ref, onValue, push, update, remove };
+        try {
+            const app = initializeApp(firebaseConfig);
+            const db = getDatabase(app);
+            window.fb = { db, ref, onValue, get, child };
+        } catch (e) {
+            console.error(e);
+            window.initError = e.message;
+        }
     </script>
-
-    <style>
-        body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; }
-        .project-row { border-left: 5px solid #6366f1; background: white; margin-bottom: 10px; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .debug-tag { background: #fee2e2; color: #b91c1c; font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-right: 5px; font-family: monospace; }
-    </style>
 </head>
-<body>
+<body class="bg-slate-900 text-white p-10">
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect } = React;
 
         function App() {
-            const [projects, setProjects] = useState([]);
-            const [loading, setLoading] = useState(true);
+            const [logs, setLogs] = useState([]);
+            const [status, setStatus] = useState('初始化中...');
+            const [dataSnapshot, setDataSnapshot] = useState(null);
+
+            const addLog = (msg, type = 'info') => {
+                const time = new Date().toLocaleTimeString();
+                setLogs(prev => [...prev, { time, msg, type }]);
+            };
 
             useEffect(() => {
-                if (!window.fb) return;
-                // 直接監聽 projects 節點
-                const pRef = window.fb.ref(window.fb.db, 'projects');
-                
-                window.fb.onValue(pRef, (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        // 將物件轉陣列，不做任何篩選
-                        const list = Object.keys(data).map(key => ({ ...data[key], firebaseId: key }));
-                        // 依照日期倒序
-                        list.sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate));
-                        setProjects(list);
+                if (window.initError) {
+                    addLog(`初始化失敗: ${window.initError}`, 'error');
+                    return;
+                }
+
+                if (!window.fb) {
+                    addLog('Firebase SDK 未載入', 'error');
+                    return;
+                }
+
+                const { db, ref, onValue, get, child } = window.fb;
+
+                // 1. 測試連線狀態
+                const connectedRef = ref(db, ".info/connected");
+                onValue(connectedRef, (snap) => {
+                    if (snap.val() === true) {
+                        setStatus('🟢 已連線到 Google 伺服器');
+                        addLog('連線成功 (.info/connected is true)', 'success');
+                        
+                        // 連線成功後，開始讀取資料
+                        checkData();
                     } else {
-                        setProjects([]);
+                        setStatus('🔴 尚未連線 (正在嘗試...)');
+                        addLog('等待連線中...', 'warning');
                     }
-                    setLoading(false);
                 });
+
+                // 2. 檢查資料結構
+                const checkData = () => {
+                    addLog('開始讀取資料庫根目錄...', 'info');
+                    const dbRef = ref(db);
+                    
+                    get(child(dbRef, "/"))
+                        .then((snapshot) => {
+                            if (snapshot.exists()) {
+                                const val = snapshot.val();
+                                addLog('讀取成功！資料庫有回應。', 'success');
+                                setDataSnapshot(val);
+                                
+                                const keys = Object.keys(val);
+                                addLog(`發現根目錄資料夾: [${keys.join(', ')}]`, 'info');
+
+                                if (val.projects) {
+                                    const count = Object.keys(val.projects).length;
+                                    addLog(`✅ 找到 'projects' 資料夾，裡面有 ${count} 筆資料。`, 'success');
+                                } else {
+                                    addLog(`❌ 警告：沒找到 'projects' 資料夾！您的資料可能被存到別的名稱下了？`, 'error');
+                                }
+                            } else {
+                                addLog('⚠️ 資料庫回應 "No Data Available" (資料庫是空的)', 'warning');
+                            }
+                        })
+                        .catch((error) => {
+                            addLog(`❌ 讀取失敗: ${error.message}`, 'error');
+                            if (error.message.includes('permission_denied')) {
+                                addLog('權限被拒絕！可能是資料庫規則 (Rules) 被改為 false', 'error');
+                            }
+                        });
+                };
+
             }, []);
 
             return (
-                <div className="p-4 max-w-4xl mx-auto">
-                    <h1 className="text-2xl font-black text-red-600 mb-4 border-b-2 border-red-600 pb-2">
-                        🔥 暴力抓取模式 (顯示所有資料)
-                    </h1>
-                    <p className="mb-4 text-slate-600 font-bold">
-                        目前資料庫共有：<span className="text-3xl text-indigo-600">{projects.length}</span> 筆資料
-                    </p>
-
-                    {loading ? (
-                        <div className="text-center py-10 text-xl font-bold text-slate-400">正在讀取資料庫...</div>
-                    ) : (
-                        <div className="space-y-4">
-                            {projects.map((p, index) => (
-                                <div key={p.firebaseId} className="project-row">
-                                    <div className="flex justify-between items-start mb-2">
-                                        <div>
-                                            <span className="text-sm font-bold text-slate-400 mr-2">#{index + 1}</span>
-                                            <span className="text-lg font-black text-slate-800">{p.client}</span>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="text-xs font-bold text-slate-400">{p.orderDate}</div>
-                                            <div className="text-lg font-black text-indigo-600">${(Number(p.deposit||0) + Number(p.balance||0)).toLocaleString()}</div>
-                                        </div>
-                                    </div>
-                                    
-                                    {/* 診斷區：顯示這筆資料的關鍵欄位 */}
-                                    <div className="bg-slate-100 p-2 rounded text-xs font-mono text-slate-600 mt-2">
-                                        <div>🔍 資料庫原始值診斷：</div>
-                                        <div className="flex flex-wrap gap-2 mt-1">
-                                            <span className="debug-tag">分類(type): "{p.type}"</span>
-                                            <span className="debug-tag">月份: {p.orderDate ? new Date(p.orderDate).getMonth()+1 : '無日期'}</span>
-                                            <span className="debug-tag">負責人: "{p.staff}"</span>
-                                        </div>
-                                    </div>
+                <div className="max-w-2xl mx-auto">
+                    <h1 className="text-3xl font-bold mb-6 text-indigo-400">OSSEN 系統診斷工具</h1>
+                    
+                    <div className="bg-slate-800 p-6 rounded-2xl shadow-xl mb-6 border border-slate-700">
+                        <h2 className="text-xl font-bold mb-4">目前狀態：{status}</h2>
+                        <div className="space-y-2 font-mono text-sm max-h-[400px] overflow-y-auto bg-black/30 p-4 rounded-xl">
+                            {logs.map((log, i) => (
+                                <div key={i} className={`
+                                    ${log.type === 'error' ? 'text-red-400 font-bold' : ''}
+                                    ${log.type === 'success' ? 'text-emerald-400' : ''}
+                                    ${log.type === 'warning' ? 'text-amber-400' : ''}
+                                    ${log.type === 'info' ? 'text-slate-300' : ''}
+                                `}>
+                                    <span className="opacity-50 mr-2">[{log.time}]</span>
+                                    {log.msg}
                                 </div>
                             ))}
-                            
-                            {projects.length === 0 && (
-                                <div className="text-center py-20 bg-white rounded-xl border-2 border-dashed border-slate-300">
-                                    <h2 className="text-xl font-bold text-slate-400">資料庫真的是空的...</h2>
-                                    <p className="text-slate-400 text-sm mt-2">如果是這樣，請檢查您的 Firebase 控制台，確認資料是否被手動刪除。</p>
-                                </div>
-                            )}
+                        </div>
+                    </div>
+
+                    {dataSnapshot && (
+                        <div className="bg-slate-800 p-6 rounded-2xl shadow-xl border border-slate-700">
+                            <h2 className="text-xl font-bold mb-4 text-white">資料庫預覽 (Raw Data)</h2>
+                            <p className="text-sm text-slate-400 mb-2">如果您看到下面有亂碼或 JSON，代表資料還在：</p>
+                            <pre className="text-xs text-green-300 overflow-auto bg-black p-4 rounded-xl max-h-[300px]">
+                                {JSON.stringify(dataSnapshot, null, 2)}
+                            </pre>
                         </div>
                     )}
                 </div>
