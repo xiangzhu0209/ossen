@@ -160,6 +160,7 @@
                     if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
                     if (filterStatus === 'receipt') return p.receipt === '未繳';
                     if (filterStatus === 'report') return p.report === '有狀況';
+                    if (filterStatus === 'no-install-date') return !p.installDate || p.installDate.trim() === '';
 
                     return true;
                 });
@@ -318,6 +319,7 @@
                                         <button onClick={()=>setFilterStatus('balance')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠尾款</button>
                                         <button onClick={()=>setFilterStatus('receipt')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-600'}`}>欠收據</button>
                                         <button onClick={()=>setFilterStatus('report')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-600'}`}>有狀況</button>
+                                        <button onClick={()=>setFilterStatus('no-install-date')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>未排施工</button>
                                         <select className="bg-slate-100 text-slate-600 text-xs font-bold rounded-lg px-2" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
                                             <option>全部人員</option><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
                                         </select>
@@ -405,6 +407,7 @@
                                     <button onClick={()=>setFilterStatus('balance')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠尾款</button>
                                     <button onClick={()=>setFilterStatus('receipt')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>欠收據</button>
                                     <button onClick={()=>setFilterStatus('report')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white shadow-md ring-2 ring-amber-300' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`}>有狀況</button>
+                                    <button onClick={()=>setFilterStatus('no-install-date')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white shadow-md ring-2 ring-cyan-300' : 'bg-cyan-100 text-cyan-600 hover:bg-cyan-200'}`}>未排施工</button>
                                 </div>
                             </div>
 
