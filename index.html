@@ -10,10 +10,11 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getDatabase, ref, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 
+    <script>
+        // 初始化 Firebase 配置
         const firebaseConfig = {
             apiKey: "AIzaSyD9g8PjN39YeiR302NUbh5t--OZ5FnqS0A",
             authDomain: "ossen-fe1ac.firebaseapp.com",
@@ -25,9 +26,19 @@
             databaseURL: "https://ossen-fe1ac-default-rtdb.firebaseio.com/"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const db = getDatabase(app);
-        window.fb = { db, ref, onValue, push, update, remove };
+        // 初始化 App 與 Database
+        const app = firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        
+        // 綁定全域視窗物件，確保原程式碼無縫接軌
+        window.fb = { 
+            db, 
+            ref: (database, path) => firebase.database().ref(path), 
+            onValue: (reference, callback) => reference.on('value', callback), 
+            push: (reference, data) => reference.push(data), 
+            update: (reference, data) => reference.update(data), 
+            remove: (reference) => reference.remove() 
+        };
     </script>
 
     <style>
@@ -113,7 +124,6 @@
             
             const getDisplayBStatus = (p) => {
                 if (p.report === '有狀況') return '未完成';
-                // 已將「師傅代收」加入固定顯示狀態，避免被日期邏輯覆蓋
                 const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '師傅代收', '無尾款'];
                 if (paidStatuses.includes(p.bStatus)) {
                     return p.bStatus;
@@ -159,6 +169,7 @@
                     // 狀態篩選
                     if (filterStatus === 'deposit') return p.dStatus === '未繳';
                     if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
+                    if (filterStatus === 'master-collect') return getDisplayBStatus(p) === '師傅代收';
                     if (filterStatus === 'receipt') return p.receipt === '未繳';
                     if (filterStatus === 'report') return p.report === '有狀況';
                     if (filterStatus === 'no-install-date') return !p.installDate || p.installDate.trim() === '';
@@ -171,7 +182,7 @@
                     if (sortOption === 'date-desc') return new Date(b.orderDate) - new Date(a.orderDate);
                     else if (sortOption === 'date-asc') return new Date(a.orderDate) - new Date(b.orderDate);
                     else if (sortOption === 'amount-desc') return ((Number(b.deposit)||0)+(Number(b.balance)||0)) - ((Number(a.deposit)||0)+(Number(a.balance)||0));
-                    else if (sortOption === 'amount-asc') return ((Number(a.deposit)||0)+(Number(a.balance)||0)) - ((Number(a.deposit)||0)+(Number(a.balance)||0));
+                    else if (sortOption === 'amount-asc') return ((Number(a.deposit)||0)+(Number(a.balance)||0)) - ((Number(b.deposit)||0)+(Number(b.balance)||0));
                     return 0;
                 });
 
@@ -271,6 +282,7 @@
                         <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[30px] shadow-2xl border border-white/20 text-center w-full max-w-sm">
                             <h2 className="text-white text-2xl font-black mb-6">OSSEN SYSTEM</h2>
                             <input type="password" placeholder="輸入密碼" inputMode="numeric" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl py-4 px-6 text-white text-center text-xl mb-6 outline-none focus:border-indigo-500" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} autoFocus />
+                            <div className="text-slate-400 text-xs text-center font-bold mb-4">預設密碼: 45688123</div>
                             <button onClick={handleLogin} className="w-full bg-indigo-600 active:bg-indigo-700 text-white font-black py-4 rounded-2xl shadow-lg transition-transform active:scale-95">進入系統</button>
                         </div>
                     </div>
@@ -318,6 +330,7 @@
                                         <button onClick={()=>setFilterStatus('all')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>全部</button>
                                         <button onClick={()=>setFilterStatus('deposit')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠訂金</button>
                                         <button onClick={()=>setFilterStatus('balance')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠尾款</button>
+                                        <button onClick={()=>setFilterStatus('master-collect')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='master-collect' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600'}`}>師傅代收</button>
                                         <button onClick={()=>setFilterStatus('receipt')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-600'}`}>欠收據</button>
                                         <button onClick={()=>setFilterStatus('report')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-600'}`}>有狀況</button>
                                         <button onClick={()=>setFilterStatus('no-install-date')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>未排施工</button>
@@ -336,7 +349,7 @@
                                 const displayBStatus = getDisplayBStatus(p);
                                 return (
                                     <div key={p.firebaseId} className="bg-white rounded-2xl p-4 mobile-card border border-slate-100 relative overflow-hidden">
-                                        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${displayBStatus==='未繳'?'bg-rose-500':status==='完工'?'bg-emerald-500':'bg-slate-300'}`}></div>
+                                        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${displayBStatus==='未繳'?'bg-rose-500':displayBStatus==='師傅代收'?'bg-blue-500':status==='完工'?'bg-emerald-500':'bg-slate-300'}`}></div>
                                         <div className="pl-3">
                                             <div className="flex justify-between items-start mb-1">
                                                 <span className="text-xs font-bold text-slate-400">{p.orderDate}</span>
@@ -348,7 +361,7 @@
                                             </div>
                                             <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-50 p-2 rounded-xl">
                                                 <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">訂金 ${Number(p.deposit).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${p.dStatus==='未繳'?'bg-rose-100 text-rose-600':'bg-slate-200 text-slate-600'}`}>{p.dStatus}</div></div>
-                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">尾款 ${Number(p.balance).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${displayBStatus==='未繳'?'bg-rose-500 text-white':'bg-slate-200 text-slate-600'}`}>{displayBStatus}</div></div>
+                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">尾款 ${Number(p.balance).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${displayBStatus==='未繳'?'bg-rose-500 text-white':displayBStatus==='師傅代收'?'bg-blue-500 text-white':'bg-slate-200 text-slate-600'}`}>{displayBStatus}</div></div>
                                                 <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">工程進度</span><div className={`text-center py-1 rounded text-xs font-bold text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : status === '製作中' ? 'bg-blue-500' : 'bg-slate-400'}`}>{status}</div></div>
                                                 <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">收據</span><div className="text-xs font-bold p-1 rounded bg-orange-50 text-orange-600">{p.receipt}</div></div>
                                             </div>
@@ -406,6 +419,7 @@
                                     <button onClick={()=>setFilterStatus('all')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-200 text-slate-500'}`}>全部</button>
                                     <button onClick={()=>setFilterStatus('deposit')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠訂金</button>
                                     <button onClick={()=>setFilterStatus('balance')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠尾款</button>
+                                    <button onClick={()=>setFilterStatus('master-collect')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='master-collect' ? 'bg-blue-600 text-white shadow-md ring-2 ring-blue-300' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'}`}>師傅代收</button>
                                     <button onClick={()=>setFilterStatus('receipt')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>欠收據</button>
                                     <button onClick={()=>setFilterStatus('report')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white shadow-md ring-2 ring-amber-300' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`}>有狀況</button>
                                     <button onClick={()=>setFilterStatus('no-install-date')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white shadow-md ring-2 ring-cyan-300' : 'bg-cyan-100 text-cyan-600 hover:bg-cyan-200'}`}>未排施工</button>
@@ -499,8 +513,7 @@
                                                 </div>
                                                 <div>
                                                     <label className="text-[9px] font-black text-indigo-400 block">尾款狀態</label>
-                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${displayBStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={displayBStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
-                                                        {/* 已在此處下拉選單新增「師傅代收」選項 */}
+                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${displayBStatus === '未繳' ? 'status-unpaid' : displayBStatus === '師傅代收' ? 'bg-blue-500 text-white' : 'bg-slate-50'}`} value={displayBStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
                                                         <option>未完成</option><option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>師傅代收</option><option>無尾款</option>
                                                     </select>
                                                 </div>
