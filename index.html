@@ -86,7 +86,7 @@
 
             const [searchTerm, setSearchTerm] = useState("");
             const [filterStatus, setFilterStatus] = useState('all');
-            const [showMobileFilters, setShowMobileFilters] = useState(false); // 手機版篩選開關
+            const [showMobileFilters, setShowMobileFilters] = useState(false);
 
             const [formData, setFormData] = useState({ 
                 client: '', deposit: 0, balance: 0, 
@@ -114,7 +114,8 @@
 
             const getDisplayBStatus = (p) => {
                 if (p.report === '有狀況') return '未完成';
-                const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款'];
+                // 【修改重點 1】將 '師傅代收' 加入合法狀態，避免系統強制改回 '未繳'
+                const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款', '師傅代收'];
                 if (paidStatuses.includes(p.bStatus)) {
                     return p.bStatus;
                 }
@@ -162,6 +163,8 @@
                     if (filterStatus === 'receipt') return p.receipt === '未繳';
                     if (filterStatus === 'report') return p.report === '有狀況';
                     if (filterStatus === 'no-install-date') return !p.installDate || p.installDate.trim() === '';
+                    // 【修改重點 2】新增「師傅代收」的篩選條件
+                    if (filterStatus === 'master-collect') return getDisplayBStatus(p) === '師傅代收';
 
                     return true;
                 });
@@ -318,10 +321,12 @@
                                         <button onClick={()=>setFilterStatus('all')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>全部</button>
                                         <button onClick={()=>setFilterStatus('deposit')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠訂金</button>
                                         <button onClick={()=>setFilterStatus('balance')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠尾款</button>
+                                        {/* 【修改重點 3】手機版加入紫色的「師傅代收」篩選按鈕 */}
+                                        <button onClick={()=>setFilterStatus('master-collect')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='master-collect' ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-600'}`}>師傅代收</button>
                                         <button onClick={()=>setFilterStatus('receipt')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-600'}`}>欠收據</button>
                                         <button onClick={()=>setFilterStatus('report')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-600'}`}>有狀況</button>
                                         <button onClick={()=>setFilterStatus('no-install-date')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>未排施工</button>
-                                        <select className="bg-slate-100 text-slate-600 text-xs font-bold rounded-lg px-2" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
+                                        <select className="col-span-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg px-2" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
                                             <option>全部人員</option><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
                                         </select>
                                     </div>
@@ -336,7 +341,7 @@
                                 const displayBStatus = getDisplayBStatus(p);
                                 return (
                                     <div key={p.firebaseId} className="bg-white rounded-2xl p-4 mobile-card border border-slate-100 relative overflow-hidden">
-                                        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${displayBStatus==='未繳'?'bg-rose-500':status==='完工'?'bg-emerald-500':'bg-slate-300'}`}></div>
+                                        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${displayBStatus==='未繳'?'bg-rose-500': displayBStatus==='師傅代收'?'bg-purple-400' : status==='完工'?'bg-emerald-500':'bg-slate-300'}`}></div>
                                         <div className="pl-3">
                                             <div className="flex justify-between items-start mb-1">
                                                 <span className="text-xs font-bold text-slate-400">{p.orderDate}</span>
@@ -348,7 +353,7 @@
                                             </div>
                                             <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-50 p-2 rounded-xl">
                                                 <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">訂金 ${Number(p.deposit).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${p.dStatus==='未繳'?'bg-rose-100 text-rose-600':'bg-slate-200 text-slate-600'}`}>{p.dStatus}</div></div>
-                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">尾款 ${Number(p.balance).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${displayBStatus==='未繳'?'bg-rose-500 text-white':'bg-slate-200 text-slate-600'}`}>{displayBStatus}</div></div>
+                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">尾款 ${Number(p.balance).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${displayBStatus==='未繳'?'bg-rose-500 text-white': displayBStatus==='師傅代收' ? 'bg-purple-100 text-purple-600' : 'bg-slate-200 text-slate-600'}`}>{displayBStatus}</div></div>
                                                 <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">工程進度</span><div className={`text-center py-1 rounded text-xs font-bold text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : status === '製作中' ? 'bg-blue-500' : 'bg-slate-400'}`}>{status}</div></div>
                                                 <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">收據</span><div className="text-xs font-bold p-1 rounded bg-orange-50 text-orange-600">{p.receipt}</div></div>
                                             </div>
@@ -406,6 +411,8 @@
                                     <button onClick={()=>setFilterStatus('all')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-200 text-slate-500'}`}>全部</button>
                                     <button onClick={()=>setFilterStatus('deposit')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠訂金</button>
                                     <button onClick={()=>setFilterStatus('balance')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠尾款</button>
+                                    {/* 【修改重點 4】電腦版加入紫色的「師傅代收」篩選按鈕 */}
+                                    <button onClick={()=>setFilterStatus('master-collect')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='master-collect' ? 'bg-purple-600 text-white shadow-md ring-2 ring-purple-300' : 'bg-purple-100 text-purple-600 hover:bg-purple-200'}`}>師傅代收</button>
                                     <button onClick={()=>setFilterStatus('receipt')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>欠收據</button>
                                     <button onClick={()=>setFilterStatus('report')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white shadow-md ring-2 ring-amber-300' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`}>有狀況</button>
                                     <button onClick={()=>setFilterStatus('no-install-date')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white shadow-md ring-2 ring-cyan-300' : 'bg-cyan-100 text-cyan-600 hover:bg-cyan-200'}`}>未排施工</button>
@@ -499,8 +506,9 @@
                                                 </div>
                                                 <div>
                                                     <label className="text-[9px] font-black text-indigo-400 block">尾款狀態</label>
-                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${displayBStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={displayBStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
-                                                        <option>未完成</option><option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>無尾款</option>
+                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${displayBStatus === '未繳' ? 'status-unpaid' : displayBStatus === '師傅代收' ? 'bg-purple-100 text-purple-700' : 'bg-slate-50'}`} value={displayBStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
+                                                        {/* 【修改重點 5】下拉選項裡新增「師傅代收」 */}
+                                                        <option>未完成</option><option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>無尾款</option><option>師傅代收</option>
                                                     </select>
                                                 </div>
                                                 <div>
