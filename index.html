@@ -113,7 +113,8 @@
             
             const getDisplayBStatus = (p) => {
                 if (p.report === '有狀況') return '未完成';
-                const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款'];
+                // 已將「師傅代收」加入固定顯示狀態，避免被日期邏輯覆蓋
+                const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '師傅代收', '無尾款'];
                 if (paidStatuses.includes(p.bStatus)) {
                     return p.bStatus;
                 }
@@ -170,7 +171,7 @@
                     if (sortOption === 'date-desc') return new Date(b.orderDate) - new Date(a.orderDate);
                     else if (sortOption === 'date-asc') return new Date(a.orderDate) - new Date(b.orderDate);
                     else if (sortOption === 'amount-desc') return ((Number(b.deposit)||0)+(Number(b.balance)||0)) - ((Number(a.deposit)||0)+(Number(a.balance)||0));
-                    else if (sortOption === 'amount-asc') return ((Number(a.deposit)||0)+(Number(a.balance)||0)) - ((Number(b.deposit)||0)+(Number(b.balance)||0));
+                    else if (sortOption === 'amount-asc') return ((Number(a.deposit)||0)+(Number(a.balance)||0)) - ((Number(a.deposit)||0)+(Number(a.balance)||0));
                     return 0;
                 });
 
@@ -499,7 +500,8 @@
                                                 <div>
                                                     <label className="text-[9px] font-black text-indigo-400 block">尾款狀態</label>
                                                     <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${displayBStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={displayBStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
-                                                        <option>未完成</option><option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>無尾款</option>
+                                                        {/* 已在此處下拉選單新增「師傅代收」選項 */}
+                                                        <option>未完成</option><option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>師傅代收</option><option>無尾款</option>
                                                     </select>
                                                 </div>
                                                 <div>
