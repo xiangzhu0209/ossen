@@ -3,18 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工程帳務系統-雙模式整合版</title>
+    <title>ossen記帳系統</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getDatabase, ref, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    <script>
-        // 初始化 Firebase 配置
         const firebaseConfig = {
             apiKey: "AIzaSyD9g8PjN39YeiR302NUbh5t--OZ5FnqS0A",
             authDomain: "ossen-fe1ac.firebaseapp.com",
@@ -26,26 +25,16 @@
             databaseURL: "https://ossen-fe1ac-default-rtdb.firebaseio.com/"
         };
 
-        // 初始化 App 與 Database
-        const app = firebase.initializeApp(firebaseConfig);
-        const db = firebase.database();
-        
-        // 綁定全域視窗物件，確保原程式碼無縫接軌
-        window.fb = { 
-            db, 
-            ref: (database, path) => firebase.database().ref(path), 
-            onValue: (reference, callback) => reference.on('value', callback), 
-            push: (reference, data) => reference.push(data), 
-            update: (reference, data) => reference.update(data), 
-            remove: (reference) => reference.remove() 
-        };
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        window.fb = { db, ref, onValue, push, update, remove };
     </script>
 
     <style>
         body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; }
         
         /* 電腦版專用樣式 (行政模式) */
-        .admin-mode-container { min-width: 1400px; } /* 強制寬度，保持電腦版排版 */
+        .admin-mode-container { min-width: 1400px; } 
         .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; outline: none; font-size: 14px; }
         .label-tiny { font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; display: block; }
         .project-row { min-width: 1350px; }
@@ -96,7 +85,7 @@
             
             const [searchTerm, setSearchTerm] = useState("");
             const [filterStatus, setFilterStatus] = useState('all');
-            const [showMobileFilters, setShowMobileFilters] = useState(false); // 手機版篩選開關
+            const [showMobileFilters, setShowMobileFilters] = useState(false);
 
             const [formData, setFormData] = useState({ 
                 client: '', deposit: 0, balance: 0, 
@@ -137,20 +126,30 @@
             };
 
             useEffect(() => {
-                if (!window.fb) return;
-                const pRef = window.fb.ref(window.fb.db, 'projects');
-                window.fb.onValue(pRef, (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        const list = Object.keys(data).map(key => ({ ...data[key], firebaseId: key }));
-                        setProjects(list.reverse()); 
-                    } else { setProjects([]); }
-                });
+                let isMounted = true;
+                // 加入等待機制：確保 Firebase ES模組 載入完畢才去抓資料，防止白屏死機
+                const checkFirebaseAndLoad = () => {
+                    if (window.fb && window.fb.db) {
+                        const pRef = window.fb.ref(window.fb.db, 'projects');
+                        window.fb.onValue(pRef, (snapshot) => {
+                            if (!isMounted) return;
+                            const data = snapshot.val();
+                            if (data) {
+                                const list = Object.keys(data).map(key => ({ ...data[key], firebaseId: key }));
+                                setProjects(list.reverse()); 
+                            } else { setProjects([]); }
+                        });
+                    } else {
+                        setTimeout(checkFirebaseAndLoad, 100);
+                    }
+                };
+                checkFirebaseAndLoad();
+
+                return () => { isMounted = false; };
             }, []);
 
             const filteredAndSortedProjects = useMemo(() => {
                 let result = projects.filter(p => {
-                    // 搜尋
                     if (searchTerm) {
                         const term = searchTerm.toLowerCase();
                         const clientMatch = (p.client || '').toLowerCase().includes(term);
@@ -158,7 +157,6 @@
                         if (!clientMatch && !noteMatch) return false;
                     }
 
-                    // 基礎篩選
                     const month = new Date(p.orderDate).getMonth() + 1;
                     const matchMonth = month === selectedMonth;
                     const matchType = p.type === selectedType;
@@ -166,7 +164,6 @@
                     
                     if (!matchMonth || !matchType || !matchStaff) return false;
 
-                    // 狀態篩選
                     if (filterStatus === 'deposit') return p.dStatus === '未繳';
                     if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
                     if (filterStatus === 'master-collect') return getDisplayBStatus(p) === '師傅代收';
@@ -177,7 +174,6 @@
                     return true;
                 });
 
-                // 排序
                 result.sort((a, b) => {
                     if (sortOption === 'date-desc') return new Date(b.orderDate) - new Date(a.orderDate);
                     else if (sortOption === 'date-asc') return new Date(a.orderDate) - new Date(b.orderDate);
@@ -282,7 +278,6 @@
                         <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[30px] shadow-2xl border border-white/20 text-center w-full max-w-sm">
                             <h2 className="text-white text-2xl font-black mb-6">OSSEN SYSTEM</h2>
                             <input type="password" placeholder="輸入密碼" inputMode="numeric" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl py-4 px-6 text-white text-center text-xl mb-6 outline-none focus:border-indigo-500" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} autoFocus />
-                            <div className="text-slate-400 text-xs text-center font-bold mb-4">預設密碼: 45688123</div>
                             <button onClick={handleLogin} className="w-full bg-indigo-600 active:bg-indigo-700 text-white font-black py-4 rounded-2xl shadow-lg transition-transform active:scale-95">進入系統</button>
                         </div>
                     </div>
@@ -295,14 +290,12 @@
             if (isBossMode) {
                 return (
                     <div className="min-h-screen flex flex-col boss-mode-container bg-[#f1f5f9]">
-                        {/* 頂部導航 */}
                         <div className="bg-[#0f172a] text-white sticky top-0 z-30 shadow-md">
                             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
                                 <div className="font-black text-lg">2026 / {selectedMonth}月</div>
                                 <div className="text-xs bg-indigo-600 px-2 py-1 rounded-lg">總額 ${totalRevenue.toLocaleString()}</div>
                             </div>
                             
-                            {/* 月份滑動 */}
                             <div className="overflow-x-auto hide-scrollbar flex p-2 gap-2 border-b border-slate-800">
                                 {[...Array(12).keys()].map(i => (
                                     <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`shrink-0 w-12 h-10 rounded-lg font-bold text-sm flex items-center justify-center transition-colors ${selectedMonth===i+1 ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
@@ -311,7 +304,6 @@
                                 ))}
                             </div>
 
-                            {/* 篩選與搜尋 */}
                             <div className="p-2 space-y-2 bg-white border-b border-slate-200">
                                 <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
                                     {['公司件', '業務件', '地板壁紙'].map(t => (
@@ -334,7 +326,7 @@
                                         <button onClick={()=>setFilterStatus('receipt')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-600'}`}>欠收據</button>
                                         <button onClick={()=>setFilterStatus('report')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-600'}`}>有狀況</button>
                                         <button onClick={()=>setFilterStatus('no-install-date')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>未排施工</button>
-                                        <select className="bg-slate-100 text-slate-600 text-xs font-bold rounded-lg px-2" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
+                                        <select className="bg-slate-100 text-slate-600 text-xs font-bold rounded-lg px-2 col-span-2" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
                                             <option>全部人員</option><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
                                         </select>
                                     </div>
@@ -342,7 +334,6 @@
                             </div>
                         </div>
 
-                        {/* 手機版卡片列表 */}
                         <div className="px-4 space-y-3 py-4">
                             {filteredAndSortedProjects.map(p => {
                                 const status = getProjectStatus(p);
@@ -382,7 +373,7 @@
             }
 
             // ==========================================
-            //  行政模式 (電腦版表格 - 包含新增功能)
+            //  行政模式 (電腦版表格)
             // ==========================================
             return (
                 <div className="flex h-screen overflow-hidden admin-mode-container">
@@ -459,7 +450,6 @@
                         </header>
 
                         <div className="flex-1 overflow-auto px-10 py-6 bg-slate-50">
-                            {/* 新增資料區塊 (電腦版保留) */}
                             <div className="bg-[#1e293b] p-6 rounded-[30px] shadow-xl mb-8 project-row">
                                 <div className="grid grid-cols-10 gap-3">
                                     <div className="col-span-1"><label className="label-tiny">日期</label><input type="date" className="input-dark w-full py-2" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
@@ -480,7 +470,6 @@
                                 </div>
                             </div>
 
-                            {/* 電腦版表格列表 */}
                             <div className="space-y-2 pb-20">
                                 {filteredAndSortedProjects.map(p => {
                                     const status = getProjectStatus(p);
