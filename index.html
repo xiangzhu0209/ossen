@@ -24,8 +24,10 @@
             measurementId: "G-Q52V0B3940",
             databaseURL: "https://ossen-fe1ac-default-rtdb.firebaseio.com/"
         };
+        // 使用全域 firebase 物件，不需要 import
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
+        // 統一建立 fb 物件給 React 使用
         window.fb = { 
             db, 
             ref: (path) => db.ref(path), 
@@ -38,7 +40,7 @@
 
     <style>
         body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; }
-        .admin-mode-container { min-width: 1400px; } 
+        .admin-mode-container { min-width: 1400px; }
         .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; outline: none; font-size: 14px; }
         .label-tiny { font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; display: block; }
         .project-row { min-width: 1350px; }
@@ -49,8 +51,8 @@
         .mobile-card { box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; opacity: 1 !important; color: #334155 !important; -webkit-text-fill-color: #334155 !important; }
         .status-unpaid { background-color: #e11d48 !important; color: white !important; border: 1px solid #be123c !important; }
+        .status-master-collect { background-color: #2563eb !important; color: white !important; border: 1px solid #1d4ed8 !important; }
         .date-missing { background-color: #ffe4e6 !important; border: 2px solid #f43f5e !important; color: #881337 !important; }
         .lock-screen { background: radial-gradient(circle at center, #1e293b, #0f172a); }
     </style>
@@ -67,12 +69,8 @@
             const CORRECT_PASSWORD = "45688123"; 
 
             const handleLogin = () => {
-                if (password.toString().trim() === CORRECT_PASSWORD) {
-                    setIsLocked(false);
-                } else {
-                    alert("密碼錯誤！");
-                    setPassword("");
-                }
+                if (password.toString().trim() === CORRECT_PASSWORD) setIsLocked(false);
+                else { alert("密碼錯誤！"); setPassword(""); }
             };
             
             const isBossMode = new URLSearchParams(window.location.search).get('mode') === 'boss';
@@ -112,9 +110,7 @@
             const getDisplayBStatus = (p) => {
                 if (p.report === '有狀況') return '未完成';
                 const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '師傅代收', '無尾款'];
-                if (paidStatuses.includes(p.bStatus)) {
-                    return p.bStatus;
-                }
+                if (paidStatuses.includes(p.bStatus)) return p.bStatus;
                 if (p.installDate) {
                     const today = new Date(); today.setHours(0,0,0,0);
                     const install = new Date(p.installDate); install.setHours(0,0,0,0);
@@ -135,18 +131,13 @@
             }, []);
 
             const filteredAndSortedProjects = useMemo(() => {
-                let result = projects.filter(p => {
+                return projects.filter(p => {
                     if (searchTerm) {
                         const term = searchTerm.toLowerCase();
-                        const clientMatch = (p.client || '').toLowerCase().includes(term);
-                        const noteMatch = (p.note || '').toLowerCase().includes(term);
-                        if (!clientMatch && !noteMatch) return false;
+                        if (!(p.client || '').toLowerCase().includes(term) && !(p.note || '').toLowerCase().includes(term)) return false;
                     }
                     const month = new Date(p.orderDate).getMonth() + 1;
-                    const matchMonth = month === selectedMonth;
-                    const matchType = p.type === selectedType;
-                    const matchStaff = filterStaff === '全部' || p.staff === filterStaff;
-                    if (!matchMonth || !matchType || !matchStaff) return false;
+                    if (month !== selectedMonth || p.type !== selectedType || (filterStaff !== '全部' && p.staff !== filterStaff)) return false;
 
                     if (filterStatus === 'deposit') return p.dStatus === '未繳';
                     if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
@@ -155,20 +146,14 @@
                     if (filterStatus === 'report') return p.report === '有狀況';
                     if (filterStatus === 'no-install-date') return !p.installDate || p.installDate.trim() === '';
                     return true;
-                });
-                result.sort((a, b) => {
+                }).sort((a, b) => {
                     if (sortOption === 'date-desc') return new Date(b.orderDate) - new Date(a.orderDate);
                     else if (sortOption === 'date-asc') return new Date(a.orderDate) - new Date(b.orderDate);
-                    else if (sortOption === 'amount-desc') return ((Number(b.deposit)||0)+(Number(b.balance)||0)) - ((Number(a.deposit)||0)+(Number(a.balance)||0));
-                    else if (sortOption === 'amount-asc') return ((Number(a.deposit)||0)+(Number(a.balance)||0)) - ((Number(b.deposit)||0)+(Number(b.balance)||0));
                     return 0;
                 });
-                return result;
             }, [projects, selectedMonth, selectedType, filterStaff, sortOption, filterStatus, searchTerm]);
 
-            const totalRevenue = useMemo(() => {
-                return filteredAndSortedProjects.reduce((sum, p) => sum + (Number(p.deposit) || 0) + (Number(p.balance) || 0), 0);
-            }, [filteredAndSortedProjects]);
+            const totalRevenue = useMemo(() => filteredAndSortedProjects.reduce((sum, p) => sum + (Number(p.deposit) || 0) + (Number(p.balance) || 0), 0), [filteredAndSortedProjects]);
 
             const handleSave = () => {
                 if (isBossMode) return;
@@ -183,48 +168,6 @@
                 }
                 const preservedDate = formData.orderDate;
                 setFormData({ client: '', deposit: 0, balance: 0, orderDate: preservedDate, staff: '公司', note: '', receipt: '未繳', installDate: '', report: '' });
-            };
-
-            const startEdit = (p) => {
-                setEditingId(p.firebaseId);
-                setFormData({ note: '', ...p });
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-            };
-
-            const handleDuplicate = (p) => {
-                setEditingId(null);
-                setFormData({ ...p, client: `${p.client} (副本)`, orderDate: new Date().toISOString().split('T')[0], note: p.note || '', firebaseId: undefined });
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-            };
-
-            const updateField = (id, field, value) => {
-                if (isBossMode) return;
-                const updates = { [field]: value };
-                const target = projects.find(p => p.firebaseId === id);
-                if (field === 'deposit') updates.dStatus = Number(value) === 0 ? '無訂金' : '未繳';
-                if (['balance', 'installDate', 'report'].includes(field)) {
-                    const curB = field === 'balance' ? value : target.balance;
-                    const curI = field === 'installDate' ? value : target.installDate;
-                    const curR = field === 'report' ? value : target.report;
-                    updates.bStatus = determineBalanceStatus(curB, curI, curR);
-                }
-                window.fb.update(window.fb.ref(`projects/${id}`), updates);
-            };
-
-            const handleDelete = (id, client) => {
-                if (!isBossMode && confirm(`確定要刪除「${client}」嗎？`)) {
-                    window.fb.remove(window.fb.ref(`projects/${id}`));
-                }
-            };
-
-            const handleExportExcel = () => {
-                const dataToExport = filteredAndSortedProjects.map(p => ({ '日期': p.orderDate, '案名客戶名': p.client, '負責人': p.staff, '總額': (Number(p.deposit) || 0) + (Number(p.balance) || 0) }));
-                if (dataToExport.length === 0) return alert("無資料");
-                const ws = XLSX.utils.json_to_sheet(dataToExport);
-                ws['!cols'] = [{wch: 15}, {wch: 30}, {wch: 10}, {wch: 15}];
-                const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, "報表");
-                XLSX.writeFile(wb, `${selectedMonth}月_${selectedType}_${new Date().toISOString().slice(0,10)}.xlsx`);
             };
 
             if (isLocked) {
@@ -247,57 +190,29 @@
                                 <div className="font-black text-lg">2026 / {selectedMonth}月</div>
                                 <div className="text-xs bg-indigo-600 px-2 py-1 rounded-lg">總額 ${totalRevenue.toLocaleString()}</div>
                             </div>
-                            <div className="overflow-x-auto hide-scrollbar flex p-2 gap-2 border-b border-slate-800">
-                                {[...Array(12).keys()].map(i => (
-                                    <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`shrink-0 w-12 h-10 rounded-lg font-bold text-sm flex items-center justify-center transition-colors ${selectedMonth===i+1 ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>{i+1}月</button>
-                                ))}
-                            </div>
-                            <div className="p-2 space-y-2 bg-white border-b border-slate-200">
-                                <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
-                                    {['公司件', '業務件', '地板壁紙'].map(t => (
-                                        <button key={t} onClick={()=>setSelectedType(t)} className={`shrink-0 px-4 py-2 rounded-full font-bold text-xs ${selectedType===t ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>{t}</button>
-                                    ))}
-                                </div>
-                                <div className="flex gap-2">
-                                    <input type="text" className="flex-1 bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700" placeholder="🔍 搜尋客戶/備註..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                                    <button onClick={()=>setShowMobileFilters(!showMobileFilters)} className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 ${filterStatus!=='all' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>篩選</button>
-                                    <button onClick={handleExportExcel} className="px-3 py-2 rounded-xl bg-emerald-100 text-emerald-700 text-xs font-bold shrink-0">匯出</button>
+                            <div className="p-2 bg-white border-b border-slate-200">
+                                <div className="flex gap-2 mb-2">
+                                    <input type="text" className="flex-1 bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700" placeholder="搜尋..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                    <button onClick={()=>setShowMobileFilters(!showMobileFilters)} className="px-4 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold">篩選</button>
                                 </div>
                                 {showMobileFilters && (
-                                    <div className="grid grid-cols-3 gap-2 pt-1 animate-fade-in">
-                                        <button onClick={()=>setFilterStatus('all')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>全部</button>
-                                        <button onClick={()=>setFilterStatus('deposit')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠訂金</button>
-                                        <button onClick={()=>setFilterStatus('balance')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠尾款</button>
-                                        <button onClick={()=>setFilterStatus('master-collect')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='master-collect' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600'}`}>師傅代收</button>
-                                        <button onClick={()=>setFilterStatus('receipt')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-600'}`}>欠收據</button>
-                                        <button onClick={()=>setFilterStatus('report')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-600'}`}>有狀況</button>
+                                    <div className="grid grid-cols-2 gap-2 text-xs font-bold">
+                                        <button onClick={()=>setFilterStatus('all')} className="bg-slate-100 p-2 rounded-lg">全部</button>
+                                        <button onClick={()=>setFilterStatus('master-collect')} className="bg-blue-100 text-blue-700 p-2 rounded-lg">師傅代收</button>
                                     </div>
                                 )}
                             </div>
                         </div>
                         <div className="px-4 space-y-3 py-4">
                             {filteredAndSortedProjects.map(p => {
-                                const status = getProjectStatus(p);
-                                const displayBStatus = getDisplayBStatus(p);
+                                const bStatus = getDisplayBStatus(p);
                                 return (
-                                    <div key={p.firebaseId} className="bg-white rounded-2xl p-4 mobile-card border border-slate-100 relative overflow-hidden">
-                                        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${displayBStatus==='未繳'?'bg-rose-500':displayBStatus==='師傅代收'?'bg-blue-500':status==='完工'?'bg-emerald-500':'bg-slate-300'}`}></div>
-                                        <div className="pl-3">
-                                            <div className="flex justify-between items-start mb-1">
-                                                <span className="text-xs font-bold text-slate-400">{p.orderDate}</span>
-                                                <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{p.staff}</span>
-                                            </div>
-                                            <div className="flex justify-between items-center mb-3">
-                                                <h3 className="text-lg font-black text-slate-800 truncate pr-2 flex-1">{p.client}</h3>
-                                                <span className="text-lg font-black text-indigo-600 font-mono">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</span>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-50 p-2 rounded-xl">
-                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">訂金 ${Number(p.deposit).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${p.dStatus==='未繳'?'bg-rose-100 text-rose-600':'bg-slate-200 text-slate-600'}`}>{p.dStatus}</div></div>
-                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">尾款 ${Number(p.balance).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${displayBStatus==='未繳'?'bg-rose-500 text-white':displayBStatus==='師傅代收'?'bg-blue-500 text-white':'bg-slate-200 text-slate-600'}`}>{displayBStatus}</div></div>
-                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">工程進度</span><div className={`text-center py-1 rounded text-xs font-bold text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : status === '製作中' ? 'bg-blue-500' : 'bg-slate-400'}`}>{status}</div></div>
-                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">收據</span><div className="text-xs font-bold p-1 rounded bg-orange-50 text-orange-600">{p.receipt}</div></div>
-                                            </div>
+                                    <div key={p.firebaseId} className="bg-white rounded-2xl p-4 border border-slate-100">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="font-black">{p.client}</span>
+                                            <span className="text-indigo-600 font-black">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</span>
                                         </div>
+                                        <div className={`text-xs font-bold px-2 py-1 rounded ${bStatus==='師傅代收' ? 'bg-blue-500 text-white' : 'bg-slate-200'}`}>{bStatus}</div>
                                     </div>
                                 );
                             })}
@@ -309,74 +224,30 @@
             return (
                 <div className="flex h-screen overflow-hidden admin-mode-container">
                     <aside className="w-24 bg-[#0f172a] flex flex-col shrink-0">
-                        <div className="p-4 text-white font-black text-center border-b border-slate-800 font-mono text-sm">2026</div>
+                        <div className="p-4 text-white font-black text-center border-b border-slate-800">2026</div>
                         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                            { [...Array(12).keys()].map(i => (
-                                <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`w-full py-3 rounded-lg font-bold text-xs ${selectedMonth===i+1?'bg-indigo-600 text-white shadow-lg':'text-slate-500'}`}>{i+1}月</button>
-                            ))}
+                            { [...Array(12).keys()].map(i => <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`w-full py-3 rounded-lg font-bold text-xs ${selectedMonth===i+1?'bg-indigo-600 text-white':'text-slate-500'}`}>{i+1}月</button>)}
                         </div>
                     </aside>
                     <main className="flex-1 flex flex-col bg-white overflow-hidden">
                         <header className="px-10 py-4 flex justify-between items-center shrink-0 border-b">
-                            <div className="flex flex-col gap-2">
-                                <div className="flex items-center gap-4">
-                                    <h1 className="text-2xl font-black text-slate-800">{selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></h1>
-                                    <div className="bg-indigo-50 px-4 py-2 rounded-2xl border border-indigo-100 ml-2">
-                                        <span className="text-[10px] font-black text-indigo-400 block uppercase leading-none mb-1">總額 ({filterStaff})</span>
-                                        <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-2 mt-1">
-                                    <input type="text" className="bg-slate-100 border border-slate-200 text-xs font-bold rounded-lg pl-3 p-1.5 w-48" placeholder="搜尋..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                                    <button onClick={()=>setFilterStatus('all')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white' : 'bg-slate-200'}`}>全部</button>
-                                    <button onClick={()=>setFilterStatus('deposit')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white' : 'bg-rose-100'}`}>欠訂金</button>
-                                    <button onClick={()=>setFilterStatus('balance')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white' : 'bg-rose-100'}`}>欠尾款</button>
-                                    <button onClick={()=>setFilterStatus('master-collect')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='master-collect' ? 'bg-blue-600 text-white' : 'bg-blue-100'}`}>師傅代收</button>
-                                    <button onClick={()=>setFilterStatus('receipt')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white' : 'bg-orange-100'}`}>欠收據</button>
-                                    <button onClick={()=>setFilterStatus('report')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100'}`}>有狀況</button>
-                                </div>
-                            </div>
-                            <button onClick={handleExportExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md">匯出報表</button>
+                             <div className="flex gap-2">
+                                <button onClick={()=>setFilterStatus('all')} className="bg-slate-200 px-3 py-1 rounded-lg text-xs font-bold">全部</button>
+                                <button onClick={()=>setFilterStatus('master-collect')} className="bg-blue-200 px-3 py-1 rounded-lg text-xs font-bold">篩選師傅代收</button>
+                             </div>
+                             <button onClick={handleExportExcel} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-black">匯出報表</button>
                         </header>
                         <div className="flex-1 overflow-auto px-10 py-6 bg-slate-50">
-                            <div className="bg-[#1e293b] p-6 rounded-[30px] shadow-xl mb-8 project-row">
-                                <div className="grid grid-cols-10 gap-3">
-                                    <div className="col-span-1"><input type="date" className="input-dark w-full py-2" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
-                                    <div className="col-span-2"><input className="input-dark w-full py-2" placeholder="客戶名稱" value={formData.client} onChange={e=>setFormData({...formData, client:e.target.value})}/></div>
-                                    <div className="col-span-2"><input className="input-dark w-full py-2" placeholder="備註事項" value={formData.note} onChange={e=>setFormData({...formData, note:e.target.value})}/></div>
-                                    <div className="col-span-1"><select className="input-dark w-full py-2" value={formData.staff} onChange={e=>setFormData({...formData, staff:e.target.value})}><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option></select></div>
-                                    <div className="col-span-1"><input type="number" className="input-dark w-full py-2" placeholder="訂金" value={formData.deposit} onChange={e=>setFormData({...formData, deposit:e.target.value})}/></div>
-                                    <div className="col-span-1"><input type="number" className="input-dark w-full py-2" placeholder="尾款" value={formData.balance} onChange={e=>setFormData({...formData, balance:e.target.value})}/></div>
-                                    <div className="col-span-1"><input type="date" className="input-dark w-full py-2" value={formData.installDate} onChange={e=>setFormData({...formData, installDate:e.target.value})}/></div>
-                                    <div className="col-span-1 flex items-end gap-2"><button onClick={handleSave} className="w-full bg-indigo-500 py-2 rounded-xl font-black text-xs text-white">{editingId ? '更新' : '儲存'}</button></div>
-                                </div>
-                            </div>
-                            <div className="space-y-2 pb-20">
+                            <div className="space-y-2">
                                 {filteredAndSortedProjects.map(p => {
-                                    const status = getProjectStatus(p);
-                                    const displayBStatus = getDisplayBStatus(p);
+                                    const bStatus = getDisplayBStatus(p);
                                     return (
-                                        <div key={p.firebaseId} className="project-row compact-row bg-white border border-slate-100 shadow-sm flex items-center relative">
-                                            <div className="w-48"><p className="text-[10px] font-bold text-slate-400">{p.orderDate}</p><h3 className="text-lg font-black text-slate-800">{p.client}</h3><span className="bg-slate-100 px-2 py-0.5 rounded text-[9px] font-black">{p.staff}</span></div>
-                                            <div className="w-48 px-4"><p className="text-xl font-black text-slate-800 font-mono">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</p></div>
-                                            <div className="w-40 px-2"><input className="w-full bg-slate-50 text-xs rounded p-1" value={p.note || ''} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} /></div>
-                                            <div className="flex-1 grid grid-cols-4 gap-4 border-x px-6">
-                                                <select className={`text-[11px] font-bold rounded-lg px-2 py-1 ${p.dStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}><option>未繳</option><option>已轉帳</option><option>已付現</option><option>無訂金</option></select>
-                                                <div className={`text-center py-1 rounded-lg text-[10px] font-black text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : 'bg-blue-500'}`}>{status}</div>
-                                                <select className={`text-[11px] font-bold rounded-lg px-2 py-1 ${displayBStatus === '未繳' ? 'status-unpaid' : displayBStatus === '師傅代收' ? 'bg-blue-500 text-white' : 'bg-slate-50'}`} value={displayBStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
-                                                    <option>未完成</option><option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>師傅代收</option><option>無尾款</option>
-                                                </select>
-                                                <select className="text-[11px] font-bold bg-orange-50 text-orange-600 rounded-lg px-2 py-1" value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}><option>未繳</option><option>已繳交</option><option>訊息確認</option><option>發票</option><option>免收據</option><option>安裝後補</option></select>
-                                            </div>
-                                            <div className="w-64 px-6 flex items-center gap-3">
-                                                <input type="date" className={`w-full rounded-lg px-2 py-1 text-[11px] font-bold ${!p.installDate ? 'date-missing' : 'bg-slate-50'}`} value={p.installDate} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
-                                                <button onClick={()=>updateField(p.firebaseId, 'report', p.report==='有狀況'?'':'有狀況')} className={`px-2 py-1 rounded-lg text-[9px] font-black border ${p.report === '有狀況' ? 'bg-amber-500 text-white' : 'text-slate-300'}`}>狀況</button>
-                                            </div>
-                                            <div className="w-48 flex justify-end gap-2">
-                                                <button onClick={()=>handleDuplicate(p)} className="p-2 text-slate-300 hover:text-green-500">複製</button>
-                                                <button onClick={()=>startEdit(p)} className="p-2 text-indigo-400 hover:text-indigo-600">修改</button>
-                                                <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="p-2 text-slate-300 hover:text-red-500">刪除</button>
-                                            </div>
+                                        <div key={p.firebaseId} className="project-row compact-row bg-white border flex items-center">
+                                            <div className="w-48 font-black">{p.client}</div>
+                                            <div className="w-48 font-mono font-black">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</div>
+                                            <select className={`text-[11px] font-bold rounded-lg px-2 py-1 ${bStatus === '師傅代收' ? 'status-master-collect' : 'bg-slate-50'}`} value={bStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
+                                                <option>未完成</option><option>未繳</option><option>師傅代收</option><option>已轉帳</option><option>無尾款</option>
+                                            </select>
                                         </div>
                                     );
                                 })}
