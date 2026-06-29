@@ -91,7 +91,8 @@
             const [formData, setFormData] = useState({ 
                 client: '', deposit: 0, balance: 0, 
                 orderDate: new Date().toISOString().split('T')[0], 
-                staff: '公司', note: '', receipt: '未繳', installDate: '', report: ''
+                staff: '公司', note: '', receipt: '未繳', installDate: '', report: '',
+                isSettled: false
             });
 
             // 邏輯核心
@@ -114,7 +115,6 @@
 
             const getDisplayBStatus = (p) => {
                 if (p.report === '有狀況') return '未完成';
-                // 【修改重點 1】將 '師傅代收' 加入合法狀態，避免系統強制改回 '未繳'
                 const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款', '師傅代收'];
                 if (paidStatuses.includes(p.bStatus)) {
                     return p.bStatus;
@@ -163,8 +163,14 @@
                     if (filterStatus === 'receipt') return p.receipt === '未繳';
                     if (filterStatus === 'report') return p.report === '有狀況';
                     if (filterStatus === 'no-install-date') return !p.installDate || p.installDate.trim() === '';
-                    // 【修改重點 2】新增「師傅代收」的篩選條件
                     if (filterStatus === 'master-collect') return getDisplayBStatus(p) === '師傅代收';
+                    
+                    // 【新增篩選條件】已付清但未結算之案件 (包含：無尾款、已付現、已轉帳、師傅代收、支票)
+                    if (filterStatus === 'pending-settlement') {
+                        const displayBStatus = getDisplayBStatus(p);
+                        const paidStatuses = ['無尾款', '已付現', '已轉帳', '師傅代收', '支票'];
+                        return paidStatuses.includes(displayBStatus) && !p.isSettled;
+                    }
 
                     return true;
                 });
@@ -196,20 +202,21 @@
                     window.fb.update(window.fb.ref(window.fb.db, `projects/${editingId}`), { ...formData, dStatus, bStatus });
                     setEditingId(null);
                 } else {
-                    window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType });
+                    window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType, isSettled: false });
                 }
 
                 const preservedDate = formData.orderDate;
                 setFormData({ 
                     client: '', deposit: 0, balance: 0, 
                     orderDate: preservedDate, 
-                    staff: '公司', note: '', receipt: '未繳', installDate: '', report: '' 
+                    staff: '公司', note: '', receipt: '未繳', installDate: '', report: '',
+                    isSettled: false
                 });
             };
 
             const startEdit = (p) => {
                 setEditingId(p.firebaseId);
-                setFormData({ note: '', ...p });
+                setFormData({ note: '', isSettled: false, ...p });
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             };
 
@@ -220,6 +227,7 @@
                     client: `${p.client} (副本)`,
                     orderDate: new Date().toISOString().split('T')[0],
                     note: p.note || '',
+                    isSettled: false,
                     firebaseId: undefined
                 });
                 window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -255,16 +263,17 @@
                     '日期': p.orderDate,
                     '案名客戶名': p.client,
                     '負責人': p.staff,
-                    '總額': (Number(p.deposit) || 0) + (Number(p.balance) || 0)
+                    '總額': (Number(p.deposit) || 0) + (Number(p.balance) || 0),
+                    '結算狀態': p.isSettled ? '已結算' : '未結算'
                 }));
                 if (dataToExport.length === 0) {
                     alert("目前列表沒有資料可供匯出");
                     return;
                 }
                 const ws = XLSX.utils.json_to_sheet(dataToExport);
-                ws['!cols'] = [{wch: 15}, {wch: 30}, {wch: 10}, {wch: 15}];
+                ws['!cols'] = [{wch: 15}, {wch: 30}, {wch: 10}, {wch: 15}, {wch: 12}];
                 const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, "報表");
+                Xxlsx.utils.book_append_sheet(wb, ws, "報表");
                 XLSX.writeFile(wb, `${selectedMonth}月_${selectedType}_${new Date().toISOString().slice(0,10)}.xlsx`);
             };
 
@@ -317,16 +326,17 @@
                                     <button onClick={handleExportExcel} className="px-3 py-2 rounded-xl bg-emerald-100 text-emerald-700 text-xs font-bold shrink-0">匯出</button>
                                 </div>
                                 {showMobileFilters && (
-                                    <div className="grid grid-cols-3 gap-2 pt-1 animate-fade-in">
-                                        <button onClick={()=>setFilterStatus('all')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>全部</button>
-                                        <button onClick={()=>setFilterStatus('deposit')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠訂金</button>
-                                        <button onClick={()=>setFilterStatus('balance')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠尾款</button>
-                                        {/* 【修改重點 3】手機版加入紫色的「師傅代收」篩選按鈕 */}
-                                        <button onClick={()=>setFilterStatus('master-collect')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='master-collect' ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-600'}`}>師傅代收</button>
-                                        <button onClick={()=>setFilterStatus('receipt')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-600'}`}>欠收據</button>
-                                        <button onClick={()=>setFilterStatus('report')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-600'}`}>有狀況</button>
-                                        <button onClick={()=>setFilterStatus('no-install-date')} className={`py-2 rounded-lg text-xs font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>未排施工</button>
-                                        <select className="col-span-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg px-2" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
+                                    <div className="grid grid-cols-4 gap-1.5 pt-1 animate-fade-in">
+                                        <button onClick={()=>setFilterStatus('all')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>全部</button>
+                                        <button onClick={()=>setFilterStatus('deposit')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠訂金</button>
+                                        <button onClick={()=>setFilterStatus('balance')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠尾款</button>
+                                        <button onClick={()=>setFilterStatus('master-collect')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='master-collect' ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-600'}`}>師傅代收</button>
+                                        <button onClick={()=>setFilterStatus('receipt')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-600'}`}>欠收據</button>
+                                        <button onClick={()=>setFilterStatus('report')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-600'}`}>有狀況</button>
+                                        <button onClick={()=>setFilterStatus('no-install-date')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>未排施工</button>
+                                        {/* 【手機版新增】待結算按鈕 */}
+                                        <button onClick={()=>setFilterStatus('pending-settlement')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='pending-settlement' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-600'}`}>待結算</button>
+                                        <select className="col-span-4 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg p-2 mt-1" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
                                             <option>全部人員</option><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
                                         </select>
                                     </div>
@@ -345,7 +355,15 @@
                                         <div className="pl-3">
                                             <div className="flex justify-between items-start mb-1">
                                                 <span className="text-xs font-bold text-slate-400">{p.orderDate}</span>
-                                                <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{p.staff}</span>
+                                                <div className="flex items-center gap-1.5">
+                                                    {/* 【手機版新增】結算狀態標籤 */}
+                                                    {p.isSettled ? (
+                                                        <span className="text-[10px] font-bold bg-emerald-500 text-white px-1.5 py-0.5 rounded-md shadow-sm">已結算</span>
+                                                    ) : (
+                                                        <span className="text-[10px] font-bold bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-md">未結算</span>
+                                                    )}
+                                                    <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{p.staff}</span>
+                                                </div>
                                             </div>
                                             <div className="flex justify-between items-center mb-3">
                                                 <h3 className="text-lg font-black text-slate-800 truncate pr-2 flex-1">{p.client}</h3>
@@ -411,11 +429,12 @@
                                     <button onClick={()=>setFilterStatus('all')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-200 text-slate-500'}`}>全部</button>
                                     <button onClick={()=>setFilterStatus('deposit')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠訂金</button>
                                     <button onClick={()=>setFilterStatus('balance')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠尾款</button>
-                                    {/* 【修改重點 4】電腦版加入紫色的「師傅代收」篩選按鈕 */}
                                     <button onClick={()=>setFilterStatus('master-collect')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='master-collect' ? 'bg-purple-600 text-white shadow-md ring-2 ring-purple-300' : 'bg-purple-100 text-purple-600 hover:bg-purple-200'}`}>師傅代收</button>
                                     <button onClick={()=>setFilterStatus('receipt')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>欠收據</button>
                                     <button onClick={()=>setFilterStatus('report')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white shadow-md ring-2 ring-amber-300' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`}>有狀況</button>
                                     <button onClick={()=>setFilterStatus('no-install-date')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white shadow-md ring-2 ring-cyan-300' : 'bg-cyan-100 text-cyan-600 hover:bg-cyan-200'}`}>未排施工</button>
+                                    {/* 【電腦版新增】待結算按鈕 */}
+                                    <button onClick={()=>setFilterStatus('pending-settlement')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='pending-settlement' ? 'bg-emerald-600 text-white shadow-md ring-2 ring-emerald-300' : 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200'}`}>待結算</button>
                                 </div>
                             </div>
 
@@ -452,7 +471,7 @@
                         </header>
 
                         <div className="flex-1 overflow-auto px-10 py-6 bg-slate-50">
-                            {/* 新增資料區塊 (電腦版保留) */}
+                            {/* 新增資料區塊 */}
                             <div className="bg-[#1e293b] p-6 rounded-[30px] shadow-xl mb-8 project-row">
                                 <div className="grid grid-cols-10 gap-3">
                                     <div className="col-span-1"><label className="label-tiny">日期</label><input type="date" className="input-dark w-full py-2" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
@@ -468,7 +487,7 @@
                                     <div className="col-span-1"><label className="label-tiny">施工日</label><input type="date" className="input-dark w-full py-2" value={formData.installDate} onChange={e=>setFormData({...formData, installDate:e.target.value})}/></div>
                                     <div className="col-span-1 flex items-end gap-2">
                                         <button onClick={handleSave} className="w-full bg-indigo-500 py-2 rounded-xl font-black text-xs text-white">{editingId ? '更新' : '儲存'}</button>
-                                        {editingId && <button onClick={()=>{setEditingId(null); setFormData({client:'', deposit:0, balance:0, orderDate: new Date().toISOString().split('T')[0], staff:'公司', note:'', installDate:''})}} className="bg-slate-500 px-2 py-2 rounded-xl text-white text-[10px]">取消</button>}
+                                        {editingId && <button onClick={()=>{setEditingId(null); setFormData({client:'', deposit:0, balance:0, orderDate: new Date().toISOString().split('T')[0], staff:'公司', note:'', installDate:'', report:'', isSettled: false})}} className="bg-slate-500 px-2 py-2 rounded-xl text-white text-[10px]">取消</button>}
                                     </div>
                                 </div>
                             </div>
@@ -493,7 +512,8 @@
                                                 <label className="text-[9px] font-black text-slate-400 block mb-1">備註</label>
                                                 <input className="w-full bg-slate-50 text-xs text-slate-600 rounded p-1 outline-none border border-transparent focus:border-indigo-300 transition-colors" value={p.note || ''} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} placeholder="..." />
                                             </div>
-                                            <div className="flex-1 grid grid-cols-4 gap-4 border-x border-slate-50 px-6">
+                                            {/* 【電腦版修改】欄位改為 5 欄以塞入已結算勾選框 */}
+                                            <div className="flex-1 grid grid-cols-5 gap-3 border-x border-slate-50 px-6">
                                                 <div>
                                                     <label className="text-[9px] font-black text-indigo-400 block">訂金狀態</label>
                                                     <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${p.dStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
@@ -507,7 +527,6 @@
                                                 <div>
                                                     <label className="text-[9px] font-black text-indigo-400 block">尾款狀態</label>
                                                     <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${displayBStatus === '未繳' ? 'status-unpaid' : displayBStatus === '師傅代收' ? 'bg-purple-100 text-purple-700' : 'bg-slate-50'}`} value={displayBStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
-                                                        {/* 【修改重點 5】下拉選項裡新增「師傅代收」 */}
                                                         <option>未完成</option><option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>無尾款</option><option>師傅代收</option>
                                                     </select>
                                                 </div>
@@ -516,6 +535,16 @@
                                                     <select className="w-full text-[11px] font-bold bg-orange-50 text-orange-600 rounded-lg px-2 py-1" value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
                                                         <option>未繳</option><option>已繳交</option><option>訊息確認</option><option>發票</option><option>免收據</option><option>安裝後補</option>
                                                     </select>
+                                                </div>
+                                                {/* 【電腦版新增】已結算獨立勾選欄 */}
+                                                <div className="flex flex-col items-center justify-center border-l border-slate-100 pl-2">
+                                                    <label className="text-[9px] font-black text-slate-400 block mb-1">已結算</label>
+                                                    <input 
+                                                        type="checkbox" 
+                                                        className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer" 
+                                                        checked={p.isSettled || false} 
+                                                        onChange={e=>updateField(p.firebaseId, 'isSettled', e.target.checked)} 
+                                                    />
                                                 </div>
                                             </div>
                                             <div className="w-64 px-6 flex items-center gap-3">
