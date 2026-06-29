@@ -348,7 +348,7 @@
 
     function checkAdmin() {
         const pwd = document.getElementById('admin-password').value;
-        if (pwd === "ossen888") { 
+        if (pwd === "671213") { 
             document.getElementById('admin-login-screen').style.display = 'none';
             document.getElementById('admin-panel').style.display = 'flex';
             loadData();
@@ -736,7 +736,7 @@
             document.getElementById('submit-btn').style.display = 'none';
             document.getElementById('numpad-container').style.pointerEvents = 'none';
             document.getElementById('numpad-container').style.opacity = '0.5';
-            autoNextTimeout = setTimeout(generateQuestion, 1500);
+            autoNextTimeout = setTimeout(generateQuestion, 500);
         } else {
             resBox.className = 'result wrong';
             if (attemptCount < 3) {
