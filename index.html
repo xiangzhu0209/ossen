@@ -3,13 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工程帳務系統-雙模式整合版</title>
+    <title>ossen 帳務管理系統</title>
     <script src="https://cdn.tailwindcss.com"></script>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <!-- 引入 Chart.js 圖表引擎 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
@@ -54,13 +57,17 @@
         .status-unpaid { background-color: #e11d48 !important; color: white !important; border: 1px solid #be123c !important; }
         .date-missing { background-color: #ffe4e6 !important; border: 2px solid #f43f5e !important; color: #881337 !important; }
         .lock-screen { background: radial-gradient(circle at center, #1e293b, #0f172a); }
+        
+        /* 圖表專用樣式 */
+        .chart-table td { padding: 6px 4px; }
+        .chart-table-header { background-color: #f8fafc; font-weight: bold; color: #475569; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef } = React;
 
         function App() {
             const [isLocked, setIsLocked] = useState(true);
@@ -94,6 +101,13 @@
                 staff: '公司', note: '', receipt: '未繳', installDate: '', report: '',
                 isSettled: false
             });
+
+            // 圖表分析模態框狀態
+            const [showChartModal, setShowChartModal] = useState(false);
+            const [chartYear, setChartYear] = useState(2026);
+            const [chartStartMonth, setChartStartMonth] = useState(1);
+            const [chartEndMonth, setChartEndMonth] = useState(12);
+            const chartInstances = useRef({});
 
             // 邏輯核心
             const getProjectStatus = (p) => {
@@ -141,22 +155,17 @@
 
             const filteredAndSortedProjects = useMemo(() => {
                 let result = projects.filter(p => {
-                    // 【升級功能】搜尋過濾：支援客戶名稱、備註、訂金、尾款、總額
                     if (searchTerm) {
                         const term = searchTerm.toLowerCase().trim();
                         const clientMatch = (p.client || '').toLowerCase().includes(term);
                         const noteMatch = (p.note || '').toLowerCase().includes(term);
-                        
-                        // 計算總額並轉成字串比對
                         const totalAmt = (Number(p.deposit) || 0) + (Number(p.balance) || 0);
                         const depositMatch = String(p.deposit || '').includes(term);
                         const balanceMatch = String(p.balance || '').includes(term);
                         const totalMatch = String(totalAmt).includes(term);
-
                         if (!clientMatch && !noteMatch && !depositMatch && !balanceMatch && !totalMatch) return false;
                     }
 
-                    // 基礎篩選
                     const month = new Date(p.orderDate).getMonth() + 1;
                     const matchMonth = month === selectedMonth;
                     const matchType = p.type === selectedType;
@@ -164,14 +173,12 @@
 
                     if (!matchMonth || !matchType || !matchStaff) return false;
 
-                    // 狀態篩選
                     if (filterStatus === 'deposit') return p.dStatus === '未繳';
                     if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
                     if (filterStatus === 'receipt') return p.receipt === '未繳';
                     if (filterStatus === 'report') return p.report === '有狀況';
                     if (filterStatus === 'no-install-date') return !p.installDate || p.installDate.trim() === '';
                     if (filterStatus === 'master-collect') return getDisplayBStatus(p) === '師傅代收';
-                    
                     if (filterStatus === 'pending-settlement') {
                         const displayBStatus = getDisplayBStatus(p);
                         const paidStatuses = ['無尾款', '已付現', '已轉帳', '師傅代收', '支票'];
@@ -181,7 +188,6 @@
                     return true;
                 });
 
-                // 排序
                 result.sort((a, b) => {
                     if (sortOption === 'date-desc') return new Date(b.orderDate) - new Date(a.orderDate);
                     else if (sortOption === 'date-asc') return new Date(a.orderDate) - new Date(b.orderDate);
@@ -200,7 +206,6 @@
             const handleSave = () => {
                 if (isBossMode) return;
                 if (!formData.client) return alert("請輸入客戶");
-
                 const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
                 const bStatus = determineBalanceStatus(formData.balance, formData.installDate, formData.report);
 
@@ -215,8 +220,7 @@
                 setFormData({ 
                     client: '', deposit: 0, balance: 0, 
                     orderDate: preservedDate, 
-                    staff: '公司', note: '', receipt: '未繳', installDate: '', report: '',
-                    isSettled: false
+                    staff: '公司', note: '', receipt: '未繳', installDate: '', report: '', isSettled: false
                 });
             };
 
@@ -229,12 +233,8 @@
             const handleDuplicate = (p) => {
                 setEditingId(null);
                 setFormData({
-                    ...p,
-                    client: `${p.client} (副本)`,
-                    orderDate: new Date().toISOString().split('T')[0],
-                    note: p.note || '',
-                    isSettled: false,
-                    firebaseId: undefined
+                    ...p, client: `${p.client} (副本)`, orderDate: new Date().toISOString().split('T')[0],
+                    note: p.note || '', isSettled: false, firebaseId: undefined
                 });
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             };
@@ -243,18 +243,13 @@
                 if (isBossMode) return;
                 const updates = { [field]: value };
                 const target = projects.find(p => p.firebaseId === id);
-
-                if (field === 'deposit') {
-                    updates.dStatus = Number(value) === 0 ? '無訂金' : '未繳';
-                }
-
+                if (field === 'deposit') updates.dStatus = Number(value) === 0 ? '無訂金' : '未繳';
                 if (['balance', 'installDate', 'report'].includes(field)) {
                     const curB = field === 'balance' ? value : target.balance;
                     const curI = field === 'installDate' ? value : target.installDate;
                     const curR = field === 'report' ? value : target.report;
                     updates.bStatus = determineBalanceStatus(curB, curI, curR);
                 }
-
                 window.fb.update(window.fb.ref(window.fb.db, `projects/${id}`), updates);
             };
 
@@ -264,25 +259,302 @@
                 }
             };
 
-            // 【修正功能】已將打錯的 Xxlsx 修正為正確的 XLSX
             const handleExportExcel = () => {
                 const dataToExport = filteredAndSortedProjects.map(p => ({
-                    '日期': p.orderDate,
-                    '案名客戶名': p.client,
-                    '負責人': p.staff,
+                    '日期': p.orderDate, '案名客戶名': p.client, '負責人': p.staff,
                     '總額': (Number(p.deposit) || 0) + (Number(p.balance) || 0),
                     '結算狀態': p.isSettled ? '已結算' : '未結算'
                 }));
-                if (dataToExport.length === 0) {
-                    alert("目前列表沒有資料可供匯出");
-                    return;
-                }
+                if (dataToExport.length === 0) return alert("目前列表沒有資料可供匯出");
                 const ws = XLSX.utils.json_to_sheet(dataToExport);
                 ws['!cols'] = [{wch: 15}, {wch: 30}, {wch: 10}, {wch: 15}, {wch: 12}];
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, "報表"); 
                 XLSX.writeFile(wb, `${selectedMonth}月_${selectedType}_${new Date().toISOString().slice(0,10)}.xlsx`);
             };
+
+            // 匯出自訂區間總表 (已修正加總邏輯)
+            const handleExportRangeExcel = () => {
+                const start = Math.min(chartStartMonth, chartEndMonth);
+                const end = Math.max(chartStartMonth, chartEndMonth);
+                const monthCount = end - start + 1;
+                
+                const rangeData = Array.from({ length: monthCount }, (_, i) => ({ month: start + i, company: 0, business: 0, floor: 0, total: 0 }));
+                let totalCompany = 0, totalBusiness = 0, totalFloor = 0, grandTotal = 0;
+
+                projects.forEach(p => {
+                    if (!p.orderDate) return;
+                    const d = new Date(p.orderDate);
+                    if (d.getFullYear() === chartYear) {
+                        const m = d.getMonth() + 1;
+                        if (m >= start && m <= end) {
+                            const idx = m - start;
+                            const amt = (Number(p.deposit) || 0) + (Number(p.balance) || 0);
+                            
+                            if (p.type === '公司件') {
+                                rangeData[idx].company += amt;
+                                totalCompany += amt;
+                            } else if (p.type === '業務件') {
+                                rangeData[idx].business += amt;
+                                totalBusiness += amt;
+                            } else if (p.type === '地板壁紙') {
+                                rangeData[idx].floor += amt;
+                                totalFloor += amt;
+                            }
+                            
+                            rangeData[idx].total += amt;
+                            grandTotal += amt;
+                        }
+                    }
+                });
+
+                const title = start === 1 && end === 12 ? `${chartYear}年度營業額統整` : `${chartYear}年 ${start}月至${end}月 營業額統整`;
+                const aoa = [
+                    [title, "", "", "", ""],
+                    ["月份", "公司件窗簾額", "業務件窗簾額", "地板壁紙額", "區間營業額"]
+                ];
+
+                rangeData.forEach((data) => {
+                    aoa.push([`${data.month}月`, data.company || 0, data.business || 0, data.floor || 0, data.total || 0]);
+                });
+
+                aoa.push(["", "", "", "", ""]); 
+                aoa.push([`區間合計`, totalCompany, totalBusiness, totalFloor, grandTotal]);
+
+                const ws = XLSX.utils.aoa_to_sheet(aoa);
+                ws['!merges'] = [ { s: {r:0, c:0}, e: {r:0, c:4} } ]; 
+                ws['!cols'] = [{wch: 10}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15}];
+
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "統整表");
+                XLSX.writeFile(wb, `${chartYear}年_${start}月至${end}月_營收統整.xlsx`);
+            };
+
+            // ==========================================
+            // 圖表繪製邏輯
+            // ==========================================
+            const dynamicChartData = useMemo(() => {
+                if (!showChartModal) return [];
+                const data = [];
+                const start = Math.min(chartStartMonth, chartEndMonth);
+                const end = Math.max(chartStartMonth, chartEndMonth);
+                
+                for (let m = start; m <= end; m++) {
+                    let company = 0, business = 0, total = 0;
+                    projects.forEach(p => {
+                        const d = new Date(p.orderDate);
+                        if (d.getFullYear() === chartYear && d.getMonth() + 1 === m) {
+                            const amt = (Number(p.deposit) || 0) + (Number(p.balance) || 0);
+                            if (p.type === '公司件') company += amt;
+                            else if (p.type === '業務件') business += amt;
+                            total += amt;
+                        }
+                    });
+                    data.push({ month: m, company, business, total });
+                }
+                return data;
+            }, [showChartModal, chartYear, chartStartMonth, chartEndMonth, projects]);
+
+            useEffect(() => {
+                if (!showChartModal || dynamicChartData.length === 0) return;
+
+                const commonOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: true } },
+                    scales: {
+                        x: { display: false }, 
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#e2e8f0' },
+                            ticks: { callback: (val) => '$' + val.toLocaleString() }
+                        }
+                    },
+                    layout: { padding: { bottom: 0 } }
+                };
+
+                const renderChart = (id, datasets) => {
+                    if (chartInstances.current[id]) chartInstances.current[id].destroy();
+                    const ctx = document.getElementById(id);
+                    if (!ctx) return;
+                    chartInstances.current[id] = new Chart(ctx, {
+                        type: 'bar',
+                        data: { labels: dynamicChartData.map(d => `${d.month}月`), datasets },
+                        options: commonOptions
+                    });
+                };
+
+                // 0. 公司件走向圖
+                renderChart('chart-company', [{
+                    data: dynamicChartData.map(d => d.company),
+                    backgroundColor: '#0f766e', barPercentage: 0.4
+                }]);
+
+                // 1. 業務件走向圖
+                renderChart('chart-business', [{
+                    data: dynamicChartData.map(d => d.business),
+                    backgroundColor: '#106487', barPercentage: 0.4
+                }]);
+
+                // 2. 總營業額走向圖
+                renderChart('chart-total', [{
+                    data: dynamicChartData.map(d => d.total),
+                    backgroundColor: '#106487', barPercentage: 0.4
+                }]);
+
+                // 3. 公司 vs 業務走向圖
+                renderChart('chart-compare', [
+                    { data: dynamicChartData.map(d => d.company), backgroundColor: '#0f766e', barPercentage: 0.8, categoryPercentage: 0.6 },
+                    { data: dynamicChartData.map(d => d.business), backgroundColor: '#e67837', barPercentage: 0.8, categoryPercentage: 0.6 }
+                ]);
+
+            }, [dynamicChartData, showChartModal]);
+
+            // 圖表對話框 UI
+            const ChartModal = () => (
+                <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 overflow-y-auto pt-10 pb-20 px-4">
+                    <div className="max-w-6xl mx-auto bg-white rounded-2xl shadow-2xl p-6">
+                        <div className="flex flex-col md:flex-row items-center justify-between border-b pb-4 mb-6 gap-4">
+                            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">
+                                📊 動態圖表分析中心
+                            </h2>
+                            <div className="flex flex-wrap items-center gap-4">
+                                <div className="flex items-center gap-2 bg-slate-100 p-2 rounded-lg">
+                                    <span className="text-sm font-bold text-slate-600">年份:</span>
+                                    <input type="number" className="w-20 bg-white border rounded px-2 py-1 text-sm font-bold outline-none" value={chartYear} onChange={e=>setChartYear(Number(e.target.value))} />
+                                    
+                                    <span className="text-sm font-bold text-slate-600 ml-2">區間:</span>
+                                    <select className="bg-white border rounded px-2 py-1 text-sm font-bold outline-none" value={chartStartMonth} onChange={e=>setChartStartMonth(Number(e.target.value))}>
+                                        {[...Array(12).keys()].map(i=><option key={i+1} value={i+1}>{i+1}月</option>)}
+                                    </select>
+                                    <span className="text-slate-400 font-bold">~</span>
+                                    <select className="bg-white border rounded px-2 py-1 text-sm font-bold outline-none" value={chartEndMonth} onChange={e=>setChartEndMonth(Number(e.target.value))}>
+                                        {[...Array(12).keys()].map(i=><option key={i+1} value={i+1}>{i+1}月</option>)}
+                                    </select>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={handleExportRangeExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold shadow-md">📥 匯出此區間報表</button>
+                                    <button onClick={() => setShowChartModal(false)} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg font-bold">關閉</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 圖表呈現區 */}
+                        <div className="space-y-12">
+                            
+                            {/* 圖表 0: 公司件 */}
+                            <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
+                                <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年公司件窗簾走向圖</h3>
+                                <div className="overflow-x-auto w-full hide-scrollbar">
+                                    <div className="min-w-[500px]">
+                                        <div className="h-[300px] w-full"><canvas id="chart-company"></canvas></div>
+                                        <table className="w-full border-collapse chart-table mt-0 text-center border border-slate-300">
+                                            <thead>
+                                                <tr className="chart-table-header">
+                                                    <td className="border border-slate-300 w-40"></td>
+                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300">{d.month}月</td>)}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
+                                                        <span className="w-3 h-3 bg-[#0f766e] inline-block shadow-sm"></span> 公司件窗簾額
+                                                    </td>
+                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.company.toLocaleString()}</td>)}
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 圖表 1: 業務件 */}
+                            <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
+                                <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年業務件窗簾走向圖</h3>
+                                <div className="overflow-x-auto w-full hide-scrollbar">
+                                    <div className="min-w-[500px]">
+                                        <div className="h-[300px] w-full"><canvas id="chart-business"></canvas></div>
+                                        <table className="w-full border-collapse chart-table mt-0 text-center border border-slate-300">
+                                            <thead>
+                                                <tr className="chart-table-header">
+                                                    <td className="border border-slate-300 w-40"></td>
+                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300">{d.month}月</td>)}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
+                                                        <span className="w-3 h-3 bg-[#106487] inline-block shadow-sm"></span> 業務件窗簾額
+                                                    </td>
+                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.business.toLocaleString()}</td>)}
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 圖表 2: 營業額 */}
+                            <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
+                                <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年營業額走向圖</h3>
+                                <div className="overflow-x-auto w-full hide-scrollbar">
+                                    <div className="min-w-[500px]">
+                                        <div className="h-[300px] w-full"><canvas id="chart-total"></canvas></div>
+                                        <table className="w-full border-collapse chart-table mt-0 text-center border border-slate-300">
+                                            <thead>
+                                                <tr className="chart-table-header">
+                                                    <td className="border border-slate-300 w-40"></td>
+                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300">{d.month}月</td>)}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
+                                                        <span className="w-3 h-3 bg-[#106487] inline-block shadow-sm"></span> 區間營業額
+                                                    </td>
+                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.total.toLocaleString()}</td>)}
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 圖表 3: 公司件與業務件 */}
+                            <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
+                                <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年公司件與業務件走向圖</h3>
+                                <div className="overflow-x-auto w-full hide-scrollbar">
+                                    <div className="min-w-[500px]">
+                                        <div className="h-[300px] w-full"><canvas id="chart-compare"></canvas></div>
+                                        <table className="w-full border-collapse chart-table mt-0 text-center border border-slate-300">
+                                            <thead>
+                                                <tr className="chart-table-header">
+                                                    <td className="border border-slate-300 w-40"></td>
+                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300">{d.month}月</td>)}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
+                                                        <span className="w-3 h-3 bg-[#0f766e] inline-block shadow-sm"></span> 公司件窗簾額
+                                                    </td>
+                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.company.toLocaleString()}</td>)}
+                                                </tr>
+                                                <tr>
+                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
+                                                        <span className="w-3 h-3 bg-[#e67837] inline-block shadow-sm"></span> 業務件窗簾額
+                                                    </td>
+                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.business.toLocaleString()}</td>)}
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
 
             if (isLocked) {
                 return (
@@ -302,12 +574,12 @@
             if (isBossMode) {
                 return (
                     <div className="min-h-screen flex flex-col boss-mode-container bg-[#f1f5f9]">
+                        {showChartModal && <ChartModal />}
                         <div className="bg-[#0f172a] text-white sticky top-0 z-30 shadow-md">
                             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
                                 <div className="font-black text-lg">2026 / {selectedMonth}月</div>
                                 <div className="text-xs bg-indigo-600 px-2 py-1 rounded-lg">總額 ${totalRevenue.toLocaleString()}</div>
                             </div>
-
                             <div className="overflow-x-auto hide-scrollbar flex p-2 gap-2 border-b border-slate-800">
                                 {[...Array(12).keys()].map(i => (
                                     <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`shrink-0 w-12 h-10 rounded-lg font-bold text-sm flex items-center justify-center transition-colors ${selectedMonth===i+1 ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
@@ -315,19 +587,20 @@
                                     </button>
                                 ))}
                             </div>
-
                             <div className="p-2 space-y-2 bg-white border-b border-slate-200">
                                 <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
                                     {['公司件', '業務件', '地板壁紙'].map(t => (
                                         <button key={t} onClick={()=>setSelectedType(t)} className={`shrink-0 px-4 py-2 rounded-full font-bold text-xs ${selectedType===t ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>{t}</button>
                                     ))}
                                 </div>
-                                <div className="flex gap-2">
-                                    <input type="text" className="flex-1 bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700" placeholder="🔍 搜尋客戶/備註/金額..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                <div className="flex gap-2 overflow-x-auto hide-scrollbar">
+                                    <input type="text" className="flex-1 min-w-[120px] bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700 shrink-0" placeholder="🔍 搜尋..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                                     <button onClick={()=>setShowMobileFilters(!showMobileFilters)} className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 ${filterStatus!=='all' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>
                                         {showMobileFilters ? '收起' : '篩選'}
                                     </button>
-                                    <button onClick={handleExportExcel} className="px-3 py-2 rounded-xl bg-emerald-100 text-emerald-700 text-xs font-bold shrink-0">匯出</button>
+                                    <button onClick={() => setShowChartModal(true)} className="px-3 py-2 rounded-xl bg-blue-100 text-blue-700 text-xs font-bold shrink-0">📈 圖表</button>
+                                    <button onClick={handleExportRangeExcel} className="px-3 py-2 rounded-xl bg-indigo-100 text-indigo-700 text-xs font-bold shrink-0">區間總表</button>
+                                    <button onClick={handleExportExcel} className="px-3 py-2 rounded-xl bg-emerald-100 text-emerald-700 text-xs font-bold shrink-0">月報</button>
                                 </div>
                                 {showMobileFilters && (
                                     <div className="grid grid-cols-4 gap-1.5 pt-1 animate-fade-in">
@@ -346,7 +619,6 @@
                                 )}
                             </div>
                         </div>
-
                         <div className="px-4 space-y-3 py-4">
                             {filteredAndSortedProjects.map(p => {
                                 const status = getProjectStatus(p);
@@ -393,10 +665,11 @@
             }
 
             // ==========================================
-            //  行政模式 (電腦版表格 - 包含新增功能)
+            //  行政模式 (電腦版表格)
             // ==========================================
             return (
                 <div className="flex h-screen overflow-hidden admin-mode-container">
+                    {showChartModal && <ChartModal />}
                     <aside className="w-24 bg-[#0f172a] flex flex-col shrink-0">
                         <div className="p-4 text-white font-black text-center border-b border-slate-800 font-mono text-sm">2026</div>
                         <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -440,8 +713,14 @@
 
                             <div className="flex flex-col items-end gap-2">
                                 <div className="flex items-center gap-2">
+                                    <button onClick={() => setShowChartModal(true)} className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">
+                                        📊 圖表分析
+                                    </button>
+                                    <button onClick={handleExportRangeExcel} className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">
+                                        區間總表匯出
+                                    </button>
                                     <button onClick={handleExportExcel} className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">
-                                        匯出報表
+                                        月報表匯出
                                     </button>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -471,7 +750,6 @@
                         </header>
 
                         <div className="flex-1 overflow-auto px-10 py-6 bg-slate-50">
-                            {/* 新增資料區塊 */}
                             <div className="bg-[#1e293b] p-6 rounded-[30px] shadow-xl mb-8 project-row">
                                 <div className="grid grid-cols-10 gap-3">
                                     <div className="col-span-1"><label className="label-tiny">日期</label><input type="date" className="input-dark w-full py-2" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
@@ -492,7 +770,6 @@
                                 </div>
                             </div>
 
-                            {/* 電腦版表格列表 */}
                             <div className="space-y-2 pb-20">
                                 {filteredAndSortedProjects.map(p => {
                                     const status = getProjectStatus(p);
@@ -537,12 +814,7 @@
                                                 </div>
                                                 <div className="flex flex-col items-center justify-center border-l border-slate-100 pl-2">
                                                     <label className="text-[9px] font-black text-slate-400 block mb-1">已結算</label>
-                                                    <input 
-                                                        type="checkbox" 
-                                                        className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer" 
-                                                        checked={p.isSettled || false} 
-                                                        onChange={e=>updateField(p.firebaseId, 'isSettled', e.target.checked)} 
-                                                    />
+                                                    <input type="checkbox" className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer" checked={p.isSettled || false} onChange={e=>updateField(p.firebaseId, 'isSettled', e.target.checked)} />
                                                 </div>
                                             </div>
                                             <div className="w-64 px-6 flex items-center gap-3">
@@ -557,9 +829,7 @@
                                             <div className="w-48 flex gap-2 justify-end">
                                                 <React.Fragment>
                                                     <button onClick={()=>handleDuplicate(p)} className="p-2 text-slate-300 hover:text-green-500" title="複製此訂單">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                                        </svg>
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
                                                     </button>
                                                     <button onClick={()=>startEdit(p)} className="p-2 text-indigo-400 hover:text-indigo-600" title="修改內容">
                                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
