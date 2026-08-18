@@ -84,7 +84,12 @@
             };
 
             const isBossMode = new URLSearchParams(window.location.search).get('mode') === 'boss';
+            
+            // 年份設定：預設抓取當前年份，產生 2025~2034 供選擇
+            const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
             const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+            const yearOptions = Array.from({ length: 10 }, (_, i) => 2025 + i);
+
             const [selectedType, setSelectedType] = useState('公司件'); 
             const [filterStaff, setFilterStaff] = useState('全部');
             const [sortOption, setSortOption] = useState('date-desc');
@@ -94,17 +99,18 @@
             const [searchTerm, setSearchTerm] = useState("");
             const [filterStatus, setFilterStatus] = useState('all');
             const [showMobileFilters, setShowMobileFilters] = useState(false);
+            const [showCrossMonthUnpaid, setShowCrossMonthUnpaid] = useState(false); 
 
             const [formData, setFormData] = useState({ 
                 client: '', deposit: 0, balance: 0, 
                 orderDate: new Date().toISOString().split('T')[0], 
                 staff: '公司', note: '', receipt: '未繳', installDate: '', report: '',
-                isSettled: false
+                isSettled: false, dStatus: '未繳', bStatus: '未完成'
             });
 
-            // 圖表分析模態框狀態
+            // 圖表分析模態框狀態，預設年份抓取系統當下年份
             const [showChartModal, setShowChartModal] = useState(false);
-            const [chartYear, setChartYear] = useState(2026);
+            const [chartYear, setChartYear] = useState(new Date().getFullYear());
             const [chartStartMonth, setChartStartMonth] = useState(1);
             const [chartEndMonth, setChartEndMonth] = useState(12);
             const chartInstances = useRef({});
@@ -118,9 +124,13 @@
                 return today >= install ? "完工" : "製作中";
             };
 
-            const determineBalanceStatus = (balance, installDate, report) => {
-                if (report === '有狀況') return '未完成';
+            const determineBalanceStatus = (balance, installDate, report, currentBStatus) => {
+                const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款', '師傅代收'];
+                
                 if (Number(balance) === 0) return '無尾款';
+                if (paidStatuses.includes(currentBStatus)) return currentBStatus; 
+                
+                if (report === '有狀況') return '未完成';
                 if (!installDate) return '未完成';
                 const today = new Date(); today.setHours(0,0,0,0);
                 const install = new Date(installDate); install.setHours(0,0,0,0);
@@ -130,9 +140,8 @@
             const getDisplayBStatus = (p) => {
                 if (p.report === '有狀況') return '未完成';
                 const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款', '師傅代收'];
-                if (paidStatuses.includes(p.bStatus)) {
-                    return p.bStatus;
-                }
+                if (paidStatuses.includes(p.bStatus)) return p.bStatus;
+                
                 if (p.installDate) {
                     const today = new Date(); today.setHours(0,0,0,0);
                     const install = new Date(p.installDate); install.setHours(0,0,0,0);
@@ -166,12 +175,23 @@
                         if (!clientMatch && !noteMatch && !depositMatch && !balanceMatch && !totalMatch) return false;
                     }
 
-                    const month = new Date(p.orderDate).getMonth() + 1;
-                    const matchMonth = month === selectedMonth;
-                    const matchType = p.type === selectedType;
-                    const matchStaff = filterStaff === '全部' || p.staff === filterStaff;
-
-                    if (!matchMonth || !matchType || !matchStaff) return false;
+                    if (showCrossMonthUnpaid) {
+                        const displayBStatus = getDisplayBStatus(p);
+                        const isTarget = p.dStatus === '未繳' || displayBStatus === '未繳' || p.receipt === '未繳';
+                        if (!isTarget) return false;
+                        if (filterStaff !== '全部' && p.staff !== filterStaff) return false;
+                    } else {
+                        const orderDateObj = new Date(p.orderDate);
+                        const month = orderDateObj.getMonth() + 1;
+                        const year = orderDateObj.getFullYear();
+                        
+                        // 修正：同時比對年份與月份
+                        const matchMonth = (month === selectedMonth) && (year === selectedYear);
+                        const matchType = p.type === selectedType;
+                        const matchStaff = filterStaff === '全部' || p.staff === filterStaff;
+                        
+                        if (!matchMonth || !matchType || !matchStaff) return false;
+                    }
 
                     if (filterStatus === 'deposit') return p.dStatus === '未繳';
                     if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
@@ -197,7 +217,7 @@
                 });
 
                 return result;
-            }, [projects, selectedMonth, selectedType, filterStaff, sortOption, filterStatus, searchTerm]);
+            }, [projects, selectedYear, selectedMonth, selectedType, filterStaff, sortOption, filterStatus, searchTerm, showCrossMonthUnpaid]);
 
             const totalRevenue = useMemo(() => {
                 return filteredAndSortedProjects.reduce((sum, p) => sum + (Number(p.deposit) || 0) + (Number(p.balance) || 0), 0);
@@ -206,21 +226,29 @@
             const handleSave = () => {
                 if (isBossMode) return;
                 if (!formData.client) return alert("請輸入客戶");
-                const dStatus = Number(formData.deposit) === 0 ? '無訂金' : '未繳';
-                const bStatus = determineBalanceStatus(formData.balance, formData.installDate, formData.report);
+                
+                let dStatus = formData.dStatus || '未繳';
+                if (Number(formData.deposit) === 0) {
+                    dStatus = '無訂金';
+                } else if (dStatus === '無訂金') {
+                    dStatus = '未繳';
+                }
+                
+                const bStatus = determineBalanceStatus(formData.balance, formData.installDate, formData.report, formData.bStatus);
+                const receipt = formData.receipt || '未繳';
 
                 if (editingId) {
-                    window.fb.update(window.fb.ref(window.fb.db, `projects/${editingId}`), { ...formData, dStatus, bStatus });
+                    window.fb.update(window.fb.ref(window.fb.db, `projects/${editingId}`), { ...formData, dStatus, bStatus, receipt });
                     setEditingId(null);
                 } else {
-                    window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, type: selectedType, isSettled: false });
+                    window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, receipt, type: selectedType, isSettled: false });
                 }
 
                 const preservedDate = formData.orderDate;
                 setFormData({ 
                     client: '', deposit: 0, balance: 0, 
                     orderDate: preservedDate, 
-                    staff: '公司', note: '', receipt: '未繳', installDate: '', report: '', isSettled: false
+                    staff: '公司', note: '', receipt: '未繳', installDate: '', report: '', isSettled: false, dStatus: '未繳', bStatus: '未完成'
                 });
             };
 
@@ -243,12 +271,17 @@
                 if (isBossMode) return;
                 const updates = { [field]: value };
                 const target = projects.find(p => p.firebaseId === id);
-                if (field === 'deposit') updates.dStatus = Number(value) === 0 ? '無訂金' : '未繳';
+                
+                if (field === 'deposit') {
+                    if (Number(value) === 0) updates.dStatus = '無訂金';
+                    else if (target.dStatus === '無訂金') updates.dStatus = '未繳';
+                }
+                
                 if (['balance', 'installDate', 'report'].includes(field)) {
                     const curB = field === 'balance' ? value : target.balance;
                     const curI = field === 'installDate' ? value : target.installDate;
                     const curR = field === 'report' ? value : target.report;
-                    updates.bStatus = determineBalanceStatus(curB, curI, curR);
+                    updates.bStatus = determineBalanceStatus(curB, curI, curR, target.bStatus);
                 }
                 window.fb.update(window.fb.ref(window.fb.db, `projects/${id}`), updates);
             };
@@ -270,10 +303,9 @@
                 ws['!cols'] = [{wch: 15}, {wch: 30}, {wch: 10}, {wch: 15}, {wch: 12}];
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, "報表"); 
-                XLSX.writeFile(wb, `${selectedMonth}月_${selectedType}_${new Date().toISOString().slice(0,10)}.xlsx`);
+                XLSX.writeFile(wb, `${selectedYear}年${selectedMonth}月_${selectedType}_${new Date().toISOString().slice(0,10)}.xlsx`);
             };
 
-            // 匯出自訂區間總表 (已修正加總邏輯)
             const handleExportRangeExcel = () => {
                 const start = Math.min(chartStartMonth, chartEndMonth);
                 const end = Math.max(chartStartMonth, chartEndMonth);
@@ -330,9 +362,6 @@
                 XLSX.writeFile(wb, `${chartYear}年_${start}月至${end}月_營收統整.xlsx`);
             };
 
-            // ==========================================
-            // 圖表繪製邏輯
-            // ==========================================
             const dynamicChartData = useMemo(() => {
                 if (!showChartModal) return [];
                 const data = [];
@@ -384,45 +413,26 @@
                     });
                 };
 
-                // 0. 公司件走向圖
-                renderChart('chart-company', [{
-                    data: dynamicChartData.map(d => d.company),
-                    backgroundColor: '#0f766e', barPercentage: 0.4
-                }]);
-
-                // 1. 業務件走向圖
-                renderChart('chart-business', [{
-                    data: dynamicChartData.map(d => d.business),
-                    backgroundColor: '#106487', barPercentage: 0.4
-                }]);
-
-                // 2. 總營業額走向圖
-                renderChart('chart-total', [{
-                    data: dynamicChartData.map(d => d.total),
-                    backgroundColor: '#106487', barPercentage: 0.4
-                }]);
-
-                // 3. 公司 vs 業務走向圖
+                renderChart('chart-company', [{ data: dynamicChartData.map(d => d.company), backgroundColor: '#0f766e', barPercentage: 0.4 }]);
+                renderChart('chart-business', [{ data: dynamicChartData.map(d => d.business), backgroundColor: '#106487', barPercentage: 0.4 }]);
+                renderChart('chart-total', [{ data: dynamicChartData.map(d => d.total), backgroundColor: '#106487', barPercentage: 0.4 }]);
                 renderChart('chart-compare', [
                     { data: dynamicChartData.map(d => d.company), backgroundColor: '#0f766e', barPercentage: 0.8, categoryPercentage: 0.6 },
                     { data: dynamicChartData.map(d => d.business), backgroundColor: '#e67837', barPercentage: 0.8, categoryPercentage: 0.6 }
                 ]);
-
             }, [dynamicChartData, showChartModal]);
 
-            // 圖表對話框 UI
             const ChartModal = () => (
                 <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 overflow-y-auto pt-10 pb-20 px-4">
                     <div className="max-w-6xl mx-auto bg-white rounded-2xl shadow-2xl p-6">
                         <div className="flex flex-col md:flex-row items-center justify-between border-b pb-4 mb-6 gap-4">
-                            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">
-                                📊 動態圖表分析中心
-                            </h2>
+                            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">📊 動態圖表分析中心</h2>
                             <div className="flex flex-wrap items-center gap-4">
                                 <div className="flex items-center gap-2 bg-slate-100 p-2 rounded-lg">
                                     <span className="text-sm font-bold text-slate-600">年份:</span>
-                                    <input type="number" className="w-20 bg-white border rounded px-2 py-1 text-sm font-bold outline-none" value={chartYear} onChange={e=>setChartYear(Number(e.target.value))} />
-                                    
+                                    <select className="w-20 bg-white border rounded px-2 py-1 text-sm font-bold outline-none" value={chartYear} onChange={e=>setChartYear(Number(e.target.value))}>
+                                        {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
                                     <span className="text-sm font-bold text-slate-600 ml-2">區間:</span>
                                     <select className="bg-white border rounded px-2 py-1 text-sm font-bold outline-none" value={chartStartMonth} onChange={e=>setChartStartMonth(Number(e.target.value))}>
                                         {[...Array(12).keys()].map(i=><option key={i+1} value={i+1}>{i+1}月</option>)}
@@ -438,118 +448,22 @@
                                 </div>
                             </div>
                         </div>
-
-                        {/* 圖表呈現區 */}
                         <div className="space-y-12">
-                            
-                            {/* 圖表 0: 公司件 */}
                             <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
                                 <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年公司件窗簾走向圖</h3>
-                                <div className="overflow-x-auto w-full hide-scrollbar">
-                                    <div className="min-w-[500px]">
-                                        <div className="h-[300px] w-full"><canvas id="chart-company"></canvas></div>
-                                        <table className="w-full border-collapse chart-table mt-0 text-center border border-slate-300">
-                                            <thead>
-                                                <tr className="chart-table-header">
-                                                    <td className="border border-slate-300 w-40"></td>
-                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300">{d.month}月</td>)}
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr>
-                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
-                                                        <span className="w-3 h-3 bg-[#0f766e] inline-block shadow-sm"></span> 公司件窗簾額
-                                                    </td>
-                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.company.toLocaleString()}</td>)}
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                                <div className="overflow-x-auto w-full hide-scrollbar"><div className="min-w-[500px]"><div className="h-[300px] w-full"><canvas id="chart-company"></canvas></div></div></div>
                             </div>
-
-                            {/* 圖表 1: 業務件 */}
                             <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
                                 <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年業務件窗簾走向圖</h3>
-                                <div className="overflow-x-auto w-full hide-scrollbar">
-                                    <div className="min-w-[500px]">
-                                        <div className="h-[300px] w-full"><canvas id="chart-business"></canvas></div>
-                                        <table className="w-full border-collapse chart-table mt-0 text-center border border-slate-300">
-                                            <thead>
-                                                <tr className="chart-table-header">
-                                                    <td className="border border-slate-300 w-40"></td>
-                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300">{d.month}月</td>)}
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr>
-                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
-                                                        <span className="w-3 h-3 bg-[#106487] inline-block shadow-sm"></span> 業務件窗簾額
-                                                    </td>
-                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.business.toLocaleString()}</td>)}
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                                <div className="overflow-x-auto w-full hide-scrollbar"><div className="min-w-[500px]"><div className="h-[300px] w-full"><canvas id="chart-business"></canvas></div></div></div>
                             </div>
-
-                            {/* 圖表 2: 營業額 */}
                             <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
                                 <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年營業額走向圖</h3>
-                                <div className="overflow-x-auto w-full hide-scrollbar">
-                                    <div className="min-w-[500px]">
-                                        <div className="h-[300px] w-full"><canvas id="chart-total"></canvas></div>
-                                        <table className="w-full border-collapse chart-table mt-0 text-center border border-slate-300">
-                                            <thead>
-                                                <tr className="chart-table-header">
-                                                    <td className="border border-slate-300 w-40"></td>
-                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300">{d.month}月</td>)}
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr>
-                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
-                                                        <span className="w-3 h-3 bg-[#106487] inline-block shadow-sm"></span> 區間營業額
-                                                    </td>
-                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.total.toLocaleString()}</td>)}
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                                <div className="overflow-x-auto w-full hide-scrollbar"><div className="min-w-[500px]"><div className="h-[300px] w-full"><canvas id="chart-total"></canvas></div></div></div>
                             </div>
-
-                            {/* 圖表 3: 公司件與業務件 */}
                             <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
                                 <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年公司件與業務件走向圖</h3>
-                                <div className="overflow-x-auto w-full hide-scrollbar">
-                                    <div className="min-w-[500px]">
-                                        <div className="h-[300px] w-full"><canvas id="chart-compare"></canvas></div>
-                                        <table className="w-full border-collapse chart-table mt-0 text-center border border-slate-300">
-                                            <thead>
-                                                <tr className="chart-table-header">
-                                                    <td className="border border-slate-300 w-40"></td>
-                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300">{d.month}月</td>)}
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr>
-                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
-                                                        <span className="w-3 h-3 bg-[#0f766e] inline-block shadow-sm"></span> 公司件窗簾額
-                                                    </td>
-                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.company.toLocaleString()}</td>)}
-                                                </tr>
-                                                <tr>
-                                                    <td className="border border-slate-300 text-left pl-4 font-bold flex items-center gap-2 text-xs">
-                                                        <span className="w-3 h-3 bg-[#e67837] inline-block shadow-sm"></span> 業務件窗簾額
-                                                    </td>
-                                                    {dynamicChartData.map(d => <td key={d.month} className="border border-slate-300 text-xs text-slate-600">${d.business.toLocaleString()}</td>)}
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                                <div className="overflow-x-auto w-full hide-scrollbar"><div className="min-w-[500px]"><div className="h-[300px] w-full"><canvas id="chart-compare"></canvas></div></div></div>
                             </div>
                         </div>
                     </div>
@@ -568,21 +482,24 @@
                 );
             }
 
-            // ==========================================
-            //  老闆模式 (手機版面)
-            // ==========================================
+            // 老闆模式 (手機版)
             if (isBossMode) {
                 return (
                     <div className="min-h-screen flex flex-col boss-mode-container bg-[#f1f5f9]">
                         {showChartModal && <ChartModal />}
                         <div className="bg-[#0f172a] text-white sticky top-0 z-30 shadow-md">
                             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
-                                <div className="font-black text-lg">2026 / {selectedMonth}月</div>
+                                <div className="font-black text-lg flex items-center gap-2">
+                                    <select className="bg-slate-800 border border-slate-600 text-white rounded px-2 py-1 outline-none text-sm font-mono" value={selectedYear} onChange={e=>{setSelectedYear(Number(e.target.value)); setShowCrossMonthUnpaid(false);}}>
+                                        {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    <span>/ {selectedMonth}月</span>
+                                </div>
                                 <div className="text-xs bg-indigo-600 px-2 py-1 rounded-lg">總額 ${totalRevenue.toLocaleString()}</div>
                             </div>
                             <div className="overflow-x-auto hide-scrollbar flex p-2 gap-2 border-b border-slate-800">
                                 {[...Array(12).keys()].map(i => (
-                                    <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`shrink-0 w-12 h-10 rounded-lg font-bold text-sm flex items-center justify-center transition-colors ${selectedMonth===i+1 ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                                    <button key={i+1} onClick={()=>{setSelectedMonth(i+1); setShowCrossMonthUnpaid(false);}} className={`shrink-0 w-12 h-10 rounded-lg font-bold text-sm flex items-center justify-center transition-colors ${selectedMonth===i+1 && !showCrossMonthUnpaid ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
                                         {i+1}月
                                     </button>
                                 ))}
@@ -592,15 +509,13 @@
                                     {['公司件', '業務件', '地板壁紙'].map(t => (
                                         <button key={t} onClick={()=>setSelectedType(t)} className={`shrink-0 px-4 py-2 rounded-full font-bold text-xs ${selectedType===t ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>{t}</button>
                                     ))}
+                                    <button onClick={()=>setShowCrossMonthUnpaid(!showCrossMonthUnpaid)} className={`shrink-0 px-4 py-2 rounded-full font-bold text-xs ${showCrossMonthUnpaid ? 'bg-rose-500 text-white shadow-md' : 'bg-rose-50 text-rose-600'}`}>🚨 跨月欠款總覽</button>
                                 </div>
                                 <div className="flex gap-2 overflow-x-auto hide-scrollbar">
                                     <input type="text" className="flex-1 min-w-[120px] bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700 shrink-0" placeholder="🔍 搜尋..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                                     <button onClick={()=>setShowMobileFilters(!showMobileFilters)} className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 ${filterStatus!=='all' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>
                                         {showMobileFilters ? '收起' : '篩選'}
                                     </button>
-                                    <button onClick={() => setShowChartModal(true)} className="px-3 py-2 rounded-xl bg-blue-100 text-blue-700 text-xs font-bold shrink-0">📈 圖表</button>
-                                    <button onClick={handleExportRangeExcel} className="px-3 py-2 rounded-xl bg-indigo-100 text-indigo-700 text-xs font-bold shrink-0">區間總表</button>
-                                    <button onClick={handleExportExcel} className="px-3 py-2 rounded-xl bg-emerald-100 text-emerald-700 text-xs font-bold shrink-0">月報</button>
                                 </div>
                                 {showMobileFilters && (
                                     <div className="grid grid-cols-4 gap-1.5 pt-1 animate-fade-in">
@@ -612,9 +527,6 @@
                                         <button onClick={()=>setFilterStatus('report')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-600'}`}>有狀況</button>
                                         <button onClick={()=>setFilterStatus('no-install-date')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>未排施工</button>
                                         <button onClick={()=>setFilterStatus('pending-settlement')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='pending-settlement' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-600'}`}>待結算</button>
-                                        <select className="col-span-4 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg p-2 mt-1" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
-                                            <option>全部人員</option><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
-                                        </select>
                                     </div>
                                 )}
                             </div>
@@ -646,7 +558,7 @@
                                                 <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">訂金 ${Number(p.deposit).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${p.dStatus==='未繳'?'bg-rose-100 text-rose-600':'bg-slate-200 text-slate-600'}`}>{p.dStatus}</div></div>
                                                 <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">尾款 ${Number(p.balance).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${displayBStatus==='未繳'?'bg-rose-500 text-white': displayBStatus==='師傅代收' ? 'bg-purple-100 text-purple-600' : 'bg-slate-200 text-slate-600'}`}>{displayBStatus}</div></div>
                                                 <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">工程進度</span><div className={`text-center py-1 rounded text-xs font-bold text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : status === '製作中' ? 'bg-blue-500' : 'bg-slate-400'}`}>{status}</div></div>
-                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">收據</span><div className="text-xs font-bold p-1 rounded bg-orange-50 text-orange-600">{p.receipt}</div></div>
+                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">收據</span><div className={`text-xs font-bold p-1 rounded ${p.receipt==='未繳'?'bg-orange-100 text-orange-600':'bg-slate-200 text-slate-600'}`}>{p.receipt}</div></div>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <div className="flex-1">
@@ -664,17 +576,19 @@
                 );
             }
 
-            // ==========================================
-            //  行政模式 (電腦版表格)
-            // ==========================================
+            // 行政模式 (電腦版)
             return (
                 <div className="flex h-screen overflow-hidden admin-mode-container">
                     {showChartModal && <ChartModal />}
                     <aside className="w-24 bg-[#0f172a] flex flex-col shrink-0">
-                        <div className="p-4 text-white font-black text-center border-b border-slate-800 font-mono text-sm">2026</div>
+                        <div className="p-4 border-b border-slate-800 text-center">
+                            <select className="w-full bg-slate-800 text-white font-black text-center border border-slate-600 rounded py-1 outline-none text-sm font-mono cursor-pointer hover:bg-slate-700 transition-colors" value={selectedYear} onChange={e=>{setSelectedYear(Number(e.target.value)); setShowCrossMonthUnpaid(false);}}>
+                                {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                            </select>
+                        </div>
                         <div className="flex-1 overflow-y-auto p-2 space-y-1">
                             { [...Array(12).keys()].map(i => (
-                                <button key={i+1} onClick={()=>setSelectedMonth(i+1)} className={`w-full py-3 rounded-lg font-bold text-xs ${selectedMonth===i+1?'bg-indigo-600 text-white shadow-lg':'text-slate-500'}`}>{i+1}月</button>
+                                <button key={i+1} onClick={()=>{setSelectedMonth(i+1); setShowCrossMonthUnpaid(false);}} className={`w-full py-3 rounded-lg font-bold text-xs ${selectedMonth===i+1 && !showCrossMonthUnpaid ?'bg-indigo-600 text-white shadow-lg':'text-slate-500'}`}>{i+1}月</button>
                             ))}
                         </div>
                     </aside>
@@ -684,19 +598,19 @@
                             <div className="flex flex-col gap-2">
                                 <div className="flex items-center gap-4">
                                     <h1 className="text-2xl font-black text-slate-800">
-                                        {selectedMonth}月 <span className="text-indigo-600">{selectedType}</span>
+                                        {showCrossMonthUnpaid ? <span className="text-rose-600">🚨 全年度欠款與未開收據</span> : <>{selectedYear}年 {selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></>}
                                     </h1>
-                                    <div className="bg-indigo-50 px-4 py-2 rounded-2xl border border-indigo-100 ml-2">
-                                        <span className="text-[10px] font-black text-indigo-400 block uppercase leading-none mb-1">當月業績總額 ({filterStaff})</span>
-                                        <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
-                                    </div>
+                                    {!showCrossMonthUnpaid && (
+                                        <div className="bg-indigo-50 px-4 py-2 rounded-2xl border border-indigo-100 ml-2">
+                                            <span className="text-[10px] font-black text-indigo-400 block uppercase leading-none mb-1">當月業績總額 ({filterStaff})</span>
+                                            <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                     <div className="relative">
                                         <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none">
-                                            <svg className="w-3 h-3 text-slate-400" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20">
-                                                <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m19 19-4-4m0-7A7 7 0 1 1 1 8a7 7 0 0 1 14 0Z"/>
-                                            </svg>
+                                            <svg className="w-3 h-3 text-slate-400" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20"><path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m19 19-4-4m0-7A7 7 0 1 1 1 8a7 7 0 0 1 14 0Z"/></svg>
                                         </div>
                                         <input type="text" className="bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-48 pl-8 p-1.5" placeholder="搜尋客戶/備註/金額..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                                     </div>
@@ -713,15 +627,9 @@
 
                             <div className="flex flex-col items-end gap-2">
                                 <div className="flex items-center gap-2">
-                                    <button onClick={() => setShowChartModal(true)} className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">
-                                        📊 圖表分析
-                                    </button>
-                                    <button onClick={handleExportRangeExcel} className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">
-                                        區間總表匯出
-                                    </button>
-                                    <button onClick={handleExportExcel} className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">
-                                        月報表匯出
-                                    </button>
+                                    <button onClick={() => setShowChartModal(true)} className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">📊 圖表分析</button>
+                                    <button onClick={handleExportRangeExcel} className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">區間總表匯出</button>
+                                    <button onClick={handleExportExcel} className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">月報表匯出</button>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <div className="flex items-center bg-slate-100 rounded-xl p-1 px-3">
@@ -733,7 +641,6 @@
                                             <option value="amount-asc">金額：低 → 高</option>
                                         </select>
                                     </div>
-
                                     <div className="flex items-center bg-slate-100 rounded-xl p-1 px-3">
                                         <span className="text-[10px] font-black text-slate-400 mr-2">負責人:</span>
                                         <select className="bg-transparent text-xs font-black outline-none" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
@@ -742,9 +649,12 @@
                                     </div>
                                     <div className="flex bg-slate-100 p-1 rounded-xl">
                                         {['公司件', '業務件', '地板壁紙'].map(t => (
-                                            <button key={t} onClick={()=>setSelectedType(t)} className={`px-4 py-1.5 rounded-lg font-black text-xs ${selectedType===t?'bg-white text-indigo-600 shadow-sm':'text-slate-400'}`}>{t}</button>
+                                            <button key={t} onClick={()=>{setSelectedType(t); setShowCrossMonthUnpaid(false);}} className={`px-4 py-1.5 rounded-lg font-black text-xs ${selectedType===t && !showCrossMonthUnpaid ?'bg-white text-indigo-600 shadow-sm':'text-slate-400'}`}>{t}</button>
                                         ))}
                                     </div>
+                                    <button onClick={()=>setShowCrossMonthUnpaid(!showCrossMonthUnpaid)} className={`px-4 py-1.5 rounded-lg font-black text-xs ml-1 transition-colors ${showCrossMonthUnpaid?'bg-rose-500 text-white shadow-md':'bg-rose-50 text-rose-600 hover:bg-rose-100'}`}>
+                                        🚨 跨月欠款/收據
+                                    </button>
                                 </div>
                             </div>
                         </header>
@@ -765,7 +675,7 @@
                                     <div className="col-span-1"><label className="label-tiny">施工日</label><input type="date" className="input-dark w-full py-2" value={formData.installDate} onChange={e=>setFormData({...formData, installDate:e.target.value})}/></div>
                                     <div className="col-span-1 flex items-end gap-2">
                                         <button onClick={handleSave} className="w-full bg-indigo-500 py-2 rounded-xl font-black text-xs text-white">{editingId ? '更新' : '儲存'}</button>
-                                        {editingId && <button onClick={()=>{setEditingId(null); setFormData({client:'', deposit:0, balance:0, orderDate: new Date().toISOString().split('T')[0], staff:'公司', note:'', installDate:'', report:'', isSettled: false})}} className="bg-slate-500 px-2 py-2 rounded-xl text-white text-[10px]">取消</button>}
+                                        {editingId && <button onClick={()=>{setEditingId(null); setFormData({client:'', deposit:0, balance:0, orderDate: new Date().toISOString().split('T')[0], staff:'公司', note:'', installDate:'', report:'', isSettled: false, dStatus: '未繳', bStatus: '未完成'})}} className="bg-slate-500 px-2 py-2 rounded-xl text-white text-[10px]">取消</button>}
                                     </div>
                                 </div>
                             </div>
@@ -775,7 +685,7 @@
                                     const status = getProjectStatus(p);
                                     const displayBStatus = getDisplayBStatus(p);
                                     return (
-                                        <div key={p.firebaseId} className="project-row compact-row bg-white border border-slate-100 shadow-sm flex items-center relative">
+                                        <div key={p.firebaseId} className={`project-row compact-row bg-white border shadow-sm flex items-center relative ${showCrossMonthUnpaid ? 'border-rose-200' : 'border-slate-100'}`}>
                                             <div className="w-48">
                                                 <p className="text-[10px] font-bold text-slate-400 font-mono">{p.orderDate}</p>
                                                 <h3 className="text-lg font-black text-slate-800 truncate" title={p.client}>{p.client}</h3>
@@ -792,7 +702,7 @@
                                             <div className="flex-1 grid grid-cols-5 gap-3 border-x border-slate-50 px-6">
                                                 <div>
                                                     <label className="text-[9px] font-black text-indigo-400 block">訂金狀態</label>
-                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${p.dStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={p.dStatus} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
+                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${p.dStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={p.dStatus || '未繳'} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
                                                         <option>未繳</option><option>已轉帳</option><option>已付現</option><option>無訂金</option>
                                                     </select>
                                                 </div>
@@ -808,7 +718,7 @@
                                                 </div>
                                                 <div>
                                                     <label className="text-[9px] font-black text-orange-400 block">收據</label>
-                                                    <select className="w-full text-[11px] font-bold bg-orange-50 text-orange-600 rounded-lg px-2 py-1" value={p.receipt} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
+                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${p.receipt === '未繳' ? 'bg-orange-100 text-orange-600' : 'bg-slate-50'}`} value={p.receipt || '未繳'} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
                                                         <option>未繳</option><option>已繳交</option><option>訊息確認</option><option>發票</option><option>免收據</option><option>安裝後補</option>
                                                     </select>
                                                 </div>
@@ -827,17 +737,15 @@
                                                 </button>
                                             </div>
                                             <div className="w-48 flex gap-2 justify-end">
-                                                <React.Fragment>
-                                                    <button onClick={()=>handleDuplicate(p)} className="p-2 text-slate-300 hover:text-green-500" title="複製此訂單">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                                                    </button>
-                                                    <button onClick={()=>startEdit(p)} className="p-2 text-indigo-400 hover:text-indigo-600" title="修改內容">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                                    </button>
-                                                    <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="p-2 text-slate-300 hover:text-red-500">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                                    </button>
-                                                </React.Fragment>
+                                                <button onClick={()=>handleDuplicate(p)} className="p-2 text-slate-300 hover:text-green-500" title="複製此訂單">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                                </button>
+                                                <button onClick={()=>startEdit(p)} className="p-2 text-indigo-400 hover:text-indigo-600" title="修改內容">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                </button>
+                                                <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="p-2 text-slate-300 hover:text-red-500">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                </button>
                                             </div>
                                         </div>
                                     );
