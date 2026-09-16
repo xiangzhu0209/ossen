@@ -162,51 +162,60 @@
                 });
             }, []);
 
+            // 全域搜尋：只要輸入關鍵字，即忽略月份/年份/類別/負責人/狀態篩選，跨全部案件搜尋
+            const isGlobalSearch = searchTerm.trim() !== '';
+
             const filteredAndSortedProjects = useMemo(() => {
-                let result = projects.filter(p => {
-                    if (searchTerm) {
-                        const term = searchTerm.toLowerCase().trim();
+                let result;
+
+                if (isGlobalSearch) {
+                    const term = searchTerm.toLowerCase().trim();
+                    result = projects.filter(p => {
                         const clientMatch = (p.client || '').toLowerCase().includes(term);
                         const noteMatch = (p.note || '').toLowerCase().includes(term);
+                        const staffMatch = (p.staff || '').toLowerCase().includes(term);
+                        const typeMatch = (p.type || '').toLowerCase().includes(term);
                         const totalAmt = (Number(p.deposit) || 0) + (Number(p.balance) || 0);
                         const depositMatch = String(p.deposit || '').includes(term);
                         const balanceMatch = String(p.balance || '').includes(term);
                         const totalMatch = String(totalAmt).includes(term);
-                        if (!clientMatch && !noteMatch && !depositMatch && !balanceMatch && !totalMatch) return false;
-                    }
+                        return clientMatch || noteMatch || staffMatch || typeMatch || depositMatch || balanceMatch || totalMatch;
+                    });
+                } else {
+                    result = projects.filter(p => {
+                        if (showCrossMonthUnpaid) {
+                            const displayBStatus = getDisplayBStatus(p);
+                            const isTarget = p.dStatus === '未繳' || displayBStatus === '未繳' || p.receipt === '未繳';
+                            if (!isTarget) return false;
+                            if (filterStaff !== '全部' && p.staff !== filterStaff) return false;
+                        } else {
+                            const orderDateObj = new Date(p.orderDate);
+                            const month = orderDateObj.getMonth() + 1;
+                            const year = orderDateObj.getFullYear();
+                            
+                            // 修正：同時比對年份與月份
+                            const matchMonth = (month === selectedMonth) && (year === selectedYear);
+                            const matchType = p.type === selectedType;
+                            const matchStaff = filterStaff === '全部' || p.staff === filterStaff;
+                            
+                            if (!matchMonth || !matchType || !matchStaff) return false;
+                        }
 
-                    if (showCrossMonthUnpaid) {
-                        const displayBStatus = getDisplayBStatus(p);
-                        const isTarget = p.dStatus === '未繳' || displayBStatus === '未繳' || p.receipt === '未繳';
-                        if (!isTarget) return false;
-                        if (filterStaff !== '全部' && p.staff !== filterStaff) return false;
-                    } else {
-                        const orderDateObj = new Date(p.orderDate);
-                        const month = orderDateObj.getMonth() + 1;
-                        const year = orderDateObj.getFullYear();
-                        
-                        // 修正：同時比對年份與月份
-                        const matchMonth = (month === selectedMonth) && (year === selectedYear);
-                        const matchType = p.type === selectedType;
-                        const matchStaff = filterStaff === '全部' || p.staff === filterStaff;
-                        
-                        if (!matchMonth || !matchType || !matchStaff) return false;
-                    }
+                        if (filterStatus === 'deposit') return p.dStatus === '未繳';
+                        if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
+                        if (filterStatus === 'receipt') return p.receipt === '未繳';
+                        if (filterStatus === 'report') return p.report === '有狀況';
+                        if (filterStatus === 'no-install-date') return !p.installDate || p.installDate.trim() === '';
+                        if (filterStatus === 'master-collect') return getDisplayBStatus(p) === '師傅代收';
+                        if (filterStatus === 'pending-settlement') {
+                            const displayBStatus = getDisplayBStatus(p);
+                            const paidStatuses = ['無尾款', '已付現', '已轉帳', '師傅代收', '支票'];
+                            return paidStatuses.includes(displayBStatus) && !p.isSettled;
+                        }
 
-                    if (filterStatus === 'deposit') return p.dStatus === '未繳';
-                    if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
-                    if (filterStatus === 'receipt') return p.receipt === '未繳';
-                    if (filterStatus === 'report') return p.report === '有狀況';
-                    if (filterStatus === 'no-install-date') return !p.installDate || p.installDate.trim() === '';
-                    if (filterStatus === 'master-collect') return getDisplayBStatus(p) === '師傅代收';
-                    if (filterStatus === 'pending-settlement') {
-                        const displayBStatus = getDisplayBStatus(p);
-                        const paidStatuses = ['無尾款', '已付現', '已轉帳', '師傅代收', '支票'];
-                        return paidStatuses.includes(displayBStatus) && !p.isSettled;
-                    }
-
-                    return true;
-                });
+                        return true;
+                    });
+                }
 
                 result.sort((a, b) => {
                     if (sortOption === 'date-desc') return new Date(b.orderDate) - new Date(a.orderDate);
@@ -512,7 +521,14 @@
                                     <button onClick={()=>setShowCrossMonthUnpaid(!showCrossMonthUnpaid)} className={`shrink-0 px-4 py-2 rounded-full font-bold text-xs ${showCrossMonthUnpaid ? 'bg-rose-500 text-white shadow-md' : 'bg-rose-50 text-rose-600'}`}>🚨 跨月欠款總覽</button>
                                 </div>
                                 <div className="flex gap-2 overflow-x-auto hide-scrollbar">
-                                    <input type="text" className="flex-1 min-w-[120px] bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700 shrink-0" placeholder="🔍 搜尋..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                    <div className="flex-1 min-w-[120px] relative shrink-0">
+                                        <input type="text" className="w-full bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700 pr-9" placeholder="🔍 搜尋..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                        {isGlobalSearch && (
+                                            <button onClick={()=>setSearchTerm('')} className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600" title="清除搜尋">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                            </button>
+                                        )}
+                                    </div>
                                     <button onClick={()=>setShowMobileFilters(!showMobileFilters)} className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 ${filterStatus!=='all' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>
                                         {showMobileFilters ? '收起' : '篩選'}
                                     </button>
@@ -531,6 +547,12 @@
                                 )}
                             </div>
                         </div>
+                        {isGlobalSearch && (
+                            <div className="mx-4 mt-3 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold flex items-center justify-between">
+                                <span>全域搜尋「{searchTerm}」共 {filteredAndSortedProjects.length} 筆（跨月）</span>
+                                <button onClick={()=>setSearchTerm('')} className="text-white/90 hover:text-white underline underline-offset-2">清除</button>
+                            </div>
+                        )}
                         <div className="px-4 space-y-3 py-4">
                             {filteredAndSortedProjects.map(p => {
                                 const status = getProjectStatus(p);
@@ -598,11 +620,17 @@
                             <div className="flex flex-col gap-2">
                                 <div className="flex items-center gap-4">
                                     <h1 className="text-2xl font-black text-slate-800">
-                                        {showCrossMonthUnpaid ? <span className="text-rose-600">🚨 全年度欠款與未開收據</span> : <>{selectedYear}年 {selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></>}
+                                        {isGlobalSearch ? (
+                                            <span className="text-blue-600">搜尋「{searchTerm}」共 {filteredAndSortedProjects.length} 筆（全年度）</span>
+                                        ) : showCrossMonthUnpaid ? (
+                                            <span className="text-rose-600">🚨 全年度欠款與未開收據</span>
+                                        ) : (
+                                            <>{selectedYear}年 {selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></>
+                                        )}
                                     </h1>
                                     {!showCrossMonthUnpaid && (
                                         <div className="bg-indigo-50 px-4 py-2 rounded-2xl border border-indigo-100 ml-2">
-                                            <span className="text-[10px] font-black text-indigo-400 block uppercase leading-none mb-1">當月業績總額 ({filterStaff})</span>
+                                            <span className="text-[10px] font-black text-indigo-400 block uppercase leading-none mb-1">{isGlobalSearch ? '搜尋結果總額' : `當月業績總額 (${filterStaff})`}</span>
                                             <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
                                         </div>
                                     )}
@@ -612,7 +640,12 @@
                                         <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none">
                                             <svg className="w-3 h-3 text-slate-400" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20"><path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m19 19-4-4m0-7A7 7 0 1 1 1 8a7 7 0 0 1 14 0Z"/></svg>
                                         </div>
-                                        <input type="text" className="bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-48 pl-8 p-1.5" placeholder="搜尋客戶/備註/金額..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                        <input type="text" className="bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-48 pl-8 pr-8 p-1.5" placeholder="搜尋客戶/備註/金額..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                        {isGlobalSearch && (
+                                            <button onClick={()=>setSearchTerm('')} className="absolute inset-y-0 right-0 flex items-center pr-2 text-slate-400 hover:text-slate-600" title="清除搜尋">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                            </button>
+                                        )}
                                     </div>
                                     <button onClick={()=>setFilterStatus('all')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-200 text-slate-500'}`}>全部</button>
                                     <button onClick={()=>setFilterStatus('deposit')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠訂金</button>
