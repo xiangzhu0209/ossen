@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ossen 帳務管理系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <!-- 引入 Chart.js 圖表引擎 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getDatabase, ref, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyD9g8PjN39YeiR302NUbh5t--OZ5FnqS0A",
+            authDomain: "ossen-fe1ac.firebaseapp.com",
+            projectId: "ossen-fe1ac",
+            storageBucket: "ossen-fe1ac.firebasestorage.app",
+            messagingSenderId: "504652484858",
+            appId: "1:504652484858:web:0c1a847d2e24b67e5f7943",
+            measurementId: "G-Q52V0B3940",
+            databaseURL: "https://ossen-fe1ac-default-rtdb.firebaseio.com/"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        window.fb = { db, ref, onValue, push, update, remove };
+    </script>
+
+    <style>
+        body { font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; background-color: #f8fafc; }
+
+        /* 電腦版專用樣式 (行政模式) */
+        .admin-mode-container { min-width: 1400px; } 
+        .input-dark { background-color: #334155; color: white; border: 1px solid #475569; border-radius: 12px; padding: 12px; outline: none; font-size: 14px; }
+        .label-tiny { font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; display: block; }
+        .project-row { min-width: 1350px; }
+        .project-row:hover .delete-btn { opacity: 1; }
+        .delete-btn { transition: all 0.2s; opacity: 0; }
+        .compact-row { padding: 12px 20px !important; border-radius: 16px !important; margin-bottom: 8px !important; }
+
+        /* 手機版專用樣式 (老闆模式) */
+        .boss-mode-container { padding-bottom: 80px; }
+        .mobile-card { box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* 通用狀態樣式 */
+        select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; opacity: 1 !important; color: #334155 !important; -webkit-text-fill-color: #334155 !important; }
+        .status-unpaid { background-color: #e11d48 !important; color: white !important; border: 1px solid #be123c !important; }
+        .date-missing { background-color: #ffe4e6 !important; border: 2px solid #f43f5e !important; color: #881337 !important; }
+        .lock-screen { background: radial-gradient(circle at center, #1e293b, #0f172a); }
+        
+        /* 圖表專用樣式 */
+        .chart-table td { padding: 6px 4px; }
+        .chart-table-header { background-color: #f8fafc; font-weight: bold; color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // 清掉 undefined 欄位(Firebase 不接受 undefined,會直接丟錯)與 firebaseId
+        const stripUndefined = (obj) => Object.fromEntries(
+            Object.entries(obj).filter(([k, v]) => v !== undefined && k !== 'firebaseId')
+        );
+
+        // 員工頁專用的精簡資料(不含任何金額),存在獨立路徑 installView/{案件id}
+        const toInstallView = (p) => ({
+            client: p.client || '', orderDate: p.orderDate || '', staff: p.staff || '',
+            type: p.type || '', installDate: p.installDate || ''
+        });
+        const syncInstallView = (id, p) =>
+            window.fb.update(window.fb.ref(window.fb.db, `installView/${id}`), toInstallView(p))
+                .catch(err => console.error('同步員工頁失敗', err));
+
+        // 萬一畫面渲染出錯,不要整片空白,顯示錯誤訊息方便排查
+        class ErrorBoundary extends React.Component {
+            constructor(props) { super(props); this.state = { error: null }; }
+            static getDerivedStateFromError(error) { return { error }; }
+            render() {
+                if (this.state.error) {
+                    return (
+                        <div className="p-8 max-w-xl mx-auto">
+                            <h2 className="text-xl font-black text-rose-600 mb-2">程式發生錯誤</h2>
+                            <pre className="bg-slate-100 text-xs p-3 rounded-lg whitespace-pre-wrap mb-4">{String((this.state.error && this.state.error.message) || this.state.error)}</pre>
+                            <button onClick={() => window.location.reload()} className="bg-indigo-600 text-white font-black px-4 py-2 rounded-xl">重新整理</button>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
+        function App() {
+            const [isLocked, setIsLocked] = useState(true);
+            const [password, setPassword] = useState("");
+            const urlMode = new URLSearchParams(window.location.search).get('mode');
+            const isInstallMode = urlMode === 'install'; // 員工登記安裝日期專用頁
+            const CORRECT_PASSWORD = isInstallMode ? "0000" : "45688123";
+
+            const handleLogin = () => {
+                if (password.toString().trim() === CORRECT_PASSWORD) {
+                    setIsLocked(false);
+                } else {
+                    alert("密碼錯誤！");
+                    setPassword("");
+                }
+            };
+
+            const isBossMode = new URLSearchParams(window.location.search).get('mode') === 'boss';
+            
+            // 年份設定：預設抓取當前年份，產生 2025~2034 供選擇
+            const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+            const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+            const yearOptions = Array.from({ length: 10 }, (_, i) => 2025 + i);
+
+            const [selectedType, setSelectedType] = useState('公司件'); 
+            const [filterStaff, setFilterStaff] = useState('全部');
+            const [sortOption, setSortOption] = useState('date-desc');
+            const [projects, setProjects] = useState([]);
+            const [editingId, setEditingId] = useState(null);
+
+            const [searchTerm, setSearchTerm] = useState("");
+            const [filterStatus, setFilterStatus] = useState('all');
+            const [showMobileFilters, setShowMobileFilters] = useState(false);
+            const [showCrossMonthUnpaid, setShowCrossMonthUnpaid] = useState(false); 
+
+            // 安裝日期登記頁狀態
+            const [installFilter, setInstallFilter] = useState('all');   // all | missing
+            const [installType, setInstallType] = useState('全部');
+            const [installSearch, setInstallSearch] = useState('');
+            const [installRows, setInstallRows] = useState([]);       // 來自 installView 的精簡資料
+            const [recentIds, setRecentIds] = useState({});               // 剛填過日期的案件,避免填完立刻從「未安排」清單消失
+
+            const [formData, setFormData] = useState({ 
+                client: '', deposit: 0, balance: 0, 
+                orderDate: new Date().toISOString().split('T')[0], 
+                staff: '公司', note: '', receipt: '未繳', installDate: '', report: '',
+                isSettled: false, dStatus: '未繳', bStatus: '未完成'
+            });
+
+            // 圖表分析模態框狀態，預設年份抓取系統當下年份
+            const [showChartModal, setShowChartModal] = useState(false);
+            const [chartYear, setChartYear] = useState(new Date().getFullYear());
+            const [chartStartMonth, setChartStartMonth] = useState(1);
+            const [chartEndMonth, setChartEndMonth] = useState(12);
+            const chartInstances = useRef({});
+
+            // 邏輯核心
+            const getProjectStatus = (p) => {
+                if (p.report === '有狀況') return "⚠️ 有狀況";
+                if (!p.installDate) return "待確認";
+                const today = new Date(); today.setHours(0,0,0,0);
+                const install = new Date(p.installDate); install.setHours(0,0,0,0);
+                return today >= install ? "完工" : "製作中";
+            };
+
+            const determineBalanceStatus = (balance, installDate, report, currentBStatus) => {
+                const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款', '師傅代收'];
+                
+                if (Number(balance) === 0) return '無尾款';
+                if (paidStatuses.includes(currentBStatus)) return currentBStatus; 
+                
+                if (report === '有狀況') return '未完成';
+                if (!installDate) return '未完成';
+                const today = new Date(); today.setHours(0,0,0,0);
+                const install = new Date(installDate); install.setHours(0,0,0,0);
+                return today >= install ? '未繳' : '未完成';
+            };
+
+            const getDisplayBStatus = (p) => {
+                if (p.report === '有狀況') return '未完成';
+                const paidStatuses = ['已轉帳', '已付現', '支票', '請款中', '無尾款', '師傅代收'];
+                if (paidStatuses.includes(p.bStatus)) return p.bStatus;
+                
+                if (p.installDate) {
+                    const today = new Date(); today.setHours(0,0,0,0);
+                    const install = new Date(p.installDate); install.setHours(0,0,0,0);
+                    return today >= install ? '未繳' : '未完成';
+                }
+                return '未完成';
+            };
+
+            useEffect(() => {
+                if (!window.fb) return;
+                if (isInstallMode) {
+                    // 員工頁:只訂閱精簡路徑,金額資料完全不會下載
+                    const vRef = window.fb.ref(window.fb.db, 'installView');
+                    window.fb.onValue(vRef, (snapshot) => {
+                        const data = snapshot.val();
+                        setInstallRows(data ? Object.keys(data).map(key => ({ ...data[key], firebaseId: key })) : []);
+                    });
+                    return;
+                }
+                const pRef = window.fb.ref(window.fb.db, 'projects');
+                window.fb.onValue(pRef, (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        const list = Object.keys(data).map(key => ({ ...data[key], firebaseId: key }));
+                        setProjects(list.reverse()); 
+                    } else { setProjects([]); }
+                });
+            }, []);
+
+            // 全域搜尋：只要輸入關鍵字，即忽略月份/年份/類別/負責人/狀態篩選，跨全部案件搜尋
+            const isGlobalSearch = searchTerm.trim() !== '';
+
+            const filteredAndSortedProjects = useMemo(() => {
+                let result;
+
+                if (isGlobalSearch) {
+                    const term = searchTerm.toLowerCase().trim();
+                    result = projects.filter(p => {
+                        const clientMatch = (p.client || '').toLowerCase().includes(term);
+                        const noteMatch = (p.note || '').toLowerCase().includes(term);
+                        const staffMatch = (p.staff || '').toLowerCase().includes(term);
+                        const typeMatch = (p.type || '').toLowerCase().includes(term);
+                        const totalAmt = (Number(p.deposit) || 0) + (Number(p.balance) || 0);
+                        const depositMatch = String(p.deposit || '').includes(term);
+                        const balanceMatch = String(p.balance || '').includes(term);
+                        const totalMatch = String(totalAmt).includes(term);
+                        return clientMatch || noteMatch || staffMatch || typeMatch || depositMatch || balanceMatch || totalMatch;
+                    });
+                } else {
+                    result = projects.filter(p => {
+                        if (showCrossMonthUnpaid) {
+                            const displayBStatus = getDisplayBStatus(p);
+                            const isTarget = p.dStatus === '未繳' || displayBStatus === '未繳' || p.receipt === '未繳';
+                            if (!isTarget) return false;
+                            if (filterStaff !== '全部' && p.staff !== filterStaff) return false;
+                        } else {
+                            const orderDateObj = new Date(p.orderDate);
+                            const month = orderDateObj.getMonth() + 1;
+                            const year = orderDateObj.getFullYear();
+                            
+                            // 修正：同時比對年份與月份
+                            const matchMonth = (month === selectedMonth) && (year === selectedYear);
+                            const matchType = p.type === selectedType;
+                            const matchStaff = filterStaff === '全部' || p.staff === filterStaff;
+                            
+                            if (!matchMonth || !matchType || !matchStaff) return false;
+                        }
+
+                        if (filterStatus === 'deposit') return p.dStatus === '未繳';
+                        if (filterStatus === 'balance') return getDisplayBStatus(p) === '未繳';
+                        if (filterStatus === 'receipt') return p.receipt === '未繳';
+                        if (filterStatus === 'report') return p.report === '有狀況';
+                        if (filterStatus === 'no-install-date') return !p.installDate || p.installDate.trim() === '';
+                        if (filterStatus === 'master-collect') return getDisplayBStatus(p) === '師傅代收';
+                        if (filterStatus === 'pending-settlement') {
+                            const displayBStatus = getDisplayBStatus(p);
+                            const paidStatuses = ['無尾款', '已付現', '已轉帳', '師傅代收', '支票'];
+                            return paidStatuses.includes(displayBStatus) && !p.isSettled;
+                        }
+
+                        return true;
+                    });
+                }
+
+                result.sort((a, b) => {
+                    if (sortOption === 'date-desc') return new Date(b.orderDate) - new Date(a.orderDate);
+                    else if (sortOption === 'date-asc') return new Date(a.orderDate) - new Date(b.orderDate);
+                    else if (sortOption === 'amount-desc') return ((Number(b.deposit)||0)+(Number(b.balance)||0)) - ((Number(a.deposit)||0)+(Number(a.balance)||0));
+                    else if (sortOption === 'amount-asc') return ((Number(a.deposit)||0)+(Number(a.balance)||0)) - ((Number(b.deposit)||0)+(Number(b.balance)||0));
+                    return 0;
+                });
+
+                return result;
+            }, [projects, selectedYear, selectedMonth, selectedType, filterStaff, sortOption, filterStatus, searchTerm, showCrossMonthUnpaid]);
+
+            const totalRevenue = useMemo(() => {
+                return filteredAndSortedProjects.reduce((sum, p) => sum + (Number(p.deposit) || 0) + (Number(p.balance) || 0), 0);
+            }, [filteredAndSortedProjects]);
+
+            // 篩選結果中「欠尾款」的金額加總
+            const unpaidBalance = useMemo(() => {
+                let sum = 0, count = 0;
+                filteredAndSortedProjects.forEach(p => {
+                    if (getDisplayBStatus(p) === '未繳') { sum += Number(p.balance) || 0; count++; }
+                });
+                return { sum, count };
+            }, [filteredAndSortedProjects]);
+
+            // 安裝日期登記頁:只保留不含金額的欄位
+            const installList = useMemo(() => {
+                if (!isInstallMode) return [];
+                const term = installSearch.trim().toLowerCase();
+                return installRows
+                    .filter(p => {
+                        if (installType !== '全部' && p.type !== installType) return false;
+                        if (term && !(p.client || '').toLowerCase().includes(term)) return false;
+                        const missing = !p.installDate || String(p.installDate).trim() === '';
+                        if (installFilter === 'missing' && !missing && !recentIds[p.firebaseId]) return false;
+                        return true;
+                    })
+                    .map(p => ({ firebaseId: p.firebaseId, client: p.client, orderDate: p.orderDate, staff: p.staff, type: p.type, installDate: p.installDate || '' }))
+                    .sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate));
+            }, [isInstallMode, installRows, installFilter, installType, installSearch, recentIds]);
+            const missingInstallCount = useMemo(
+                () => installRows.filter(p => !p.installDate || String(p.installDate).trim() === '').length,
+                [installRows]
+            );
+
+            const updateInstallDate = (id, value) => {
+                if (!isInstallMode) return;
+                // 先寫員工頁路徑,成功後再把日期帶回主資料(只寫 installDate,不需要讀取金額)
+                window.fb.update(window.fb.ref(window.fb.db, `installView/${id}`), { installDate: value })
+                    .then(() => window.fb.update(window.fb.ref(window.fb.db, `projects/${id}`), { installDate: value }).catch(e => console.error('回寫主資料失敗', e)))
+                    .catch(err => alert('儲存失敗:' + err.message));
+                setRecentIds(prev => ({ ...prev, [id]: true }));
+            };
+
+            const handleSave = () => {
+                if (isBossMode || isInstallMode) return;
+                if (!formData.client) return alert("請輸入客戶");
+                
+                let dStatus = formData.dStatus || '未繳';
+                if (Number(formData.deposit) === 0) {
+                    dStatus = '無訂金';
+                } else if (dStatus === '無訂金') {
+                    dStatus = '未繳';
+                }
+                
+                const bStatus = determineBalanceStatus(formData.balance, formData.installDate, formData.report, formData.bStatus);
+                const receipt = formData.receipt || '未繳';
+
+                const clean = stripUndefined(formData);
+                try {
+                    if (editingId) {
+                        window.fb.update(window.fb.ref(window.fb.db, `projects/${editingId}`), { ...clean, dStatus, bStatus, receipt });
+                        const old = projects.find(p => p.firebaseId === editingId) || {};
+                        syncInstallView(editingId, { ...old, ...clean });
+                        setEditingId(null);
+                    } else {
+                        const newRef = window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...clean, dStatus, bStatus, receipt, type: selectedType, isSettled: false });
+                        syncInstallView(newRef.key, { ...clean, type: selectedType });
+                    }
+                } catch (err) {
+                    alert('儲存失敗:' + err.message);
+                    return;
+                }
+
+                const preservedDate = formData.orderDate;
+                setFormData({ 
+                    client: '', deposit: 0, balance: 0, 
+                    orderDate: preservedDate, 
+                    staff: '公司', note: '', receipt: '未繳', installDate: '', report: '', isSettled: false, dStatus: '未繳', bStatus: '未完成'
+                });
+            };
+
+            const startEdit = (p) => {
+                setEditingId(p.firebaseId);
+                setFormData({ note: '', isSettled: false, installDate: '', report: '', ...stripUndefined(p) });
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            const handleDuplicate = (p) => {
+                setEditingId(null);
+                // 只帶入基本資料,每個欄位都給預設值(不再把 undefined 的 firebaseId 帶進表單)
+                setFormData({
+                    client: `${p.client || ''} (副本)`,
+                    deposit: p.deposit ?? 0,
+                    balance: p.balance ?? 0,
+                    orderDate: new Date().toISOString().split('T')[0],
+                    staff: p.staff || '公司',
+                    note: p.note || '',
+                    receipt: '未繳', installDate: '', report: '',
+                    isSettled: false, dStatus: '未繳', bStatus: '未完成'
+                });
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            const updateField = (id, field, value) => {
+                if (isBossMode || isInstallMode) return;
+                const updates = { [field]: value };
+                const target = projects.find(p => p.firebaseId === id);
+                
+                if (field === 'deposit') {
+                    if (Number(value) === 0) updates.dStatus = '無訂金';
+                    else if (target.dStatus === '無訂金') updates.dStatus = '未繳';
+                }
+                
+                if (['balance', 'installDate', 'report'].includes(field)) {
+                    const curB = field === 'balance' ? value : target.balance;
+                    const curI = field === 'installDate' ? value : target.installDate;
+                    const curR = field === 'report' ? value : target.report;
+                    updates.bStatus = determineBalanceStatus(curB, curI, curR, target.bStatus);
+                }
+                window.fb.update(window.fb.ref(window.fb.db, `projects/${id}`), updates);
+                if (field === 'installDate') syncInstallView(id, { ...target, installDate: value });
+            };
+
+            const handleDelete = (id, client) => {
+                if (!isBossMode && confirm(`確定要刪除「${client}」嗎？`)) {
+                    window.fb.remove(window.fb.ref(window.fb.db, `projects/${id}`));
+                    window.fb.remove(window.fb.ref(window.fb.db, `installView/${id}`));
+                }
+            };
+
+            // 一次性(或隨時)把所有案件的精簡資料同步到員工頁
+            const handleSyncInstallView = () => {
+                if (!confirm(`要把目前 ${projects.length} 筆案件同步到員工安裝日期頁嗎?`)) return;
+                const map = {};
+                projects.forEach(p => { map[p.firebaseId] = toInstallView(p); });
+                window.fb.update(window.fb.ref(window.fb.db, 'installView'), map)
+                    .then(() => alert(`同步完成,共 ${projects.length} 筆`))
+                    .catch(err => alert('同步失敗:' + err.message));
+            };
+
+            const handleExportExcel = () => {
+                const dataToExport = filteredAndSortedProjects.map(p => ({
+                    '日期': p.orderDate, '案名客戶名': p.client, '負責人': p.staff,
+                    '總額': (Number(p.deposit) || 0) + (Number(p.balance) || 0),
+                    '結算狀態': p.isSettled ? '已結算' : '未結算'
+                }));
+                if (dataToExport.length === 0) return alert("目前列表沒有資料可供匯出");
+                const ws = XLSX.utils.json_to_sheet(dataToExport);
+                ws['!cols'] = [{wch: 15}, {wch: 30}, {wch: 10}, {wch: 15}, {wch: 12}];
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "報表"); 
+                XLSX.writeFile(wb, `${selectedYear}年${selectedMonth}月_${selectedType}_${new Date().toISOString().slice(0,10)}.xlsx`);
+            };
+
+            const handleExportRangeExcel = () => {
+                const start = Math.min(chartStartMonth, chartEndMonth);
+                const end = Math.max(chartStartMonth, chartEndMonth);
+                const monthCount = end - start + 1;
+                
+                const rangeData = Array.from({ length: monthCount }, (_, i) => ({ month: start + i, company: 0, business: 0, floor: 0, total: 0 }));
+                let totalCompany = 0, totalBusiness = 0, totalFloor = 0, grandTotal = 0;
+
+                projects.forEach(p => {
+                    if (!p.orderDate) return;
+                    const d = new Date(p.orderDate);
+                    if (d.getFullYear() === chartYear) {
+                        const m = d.getMonth() + 1;
+                        if (m >= start && m <= end) {
+                            const idx = m - start;
+                            const amt = (Number(p.deposit) || 0) + (Number(p.balance) || 0);
+                            
+                            if (p.type === '公司件') {
+                                rangeData[idx].company += amt;
+                                totalCompany += amt;
+                            } else if (p.type === '業務件') {
+                                rangeData[idx].business += amt;
+                                totalBusiness += amt;
+                            } else if (p.type === '地板壁紙') {
+                                rangeData[idx].floor += amt;
+                                totalFloor += amt;
+                            }
+                            
+                            rangeData[idx].total += amt;
+                            grandTotal += amt;
+                        }
+                    }
+                });
+
+                const title = start === 1 && end === 12 ? `${chartYear}年度營業額統整` : `${chartYear}年 ${start}月至${end}月 營業額統整`;
+                const aoa = [
+                    [title, "", "", "", ""],
+                    ["月份", "公司件窗簾額", "業務件窗簾額", "地板壁紙額", "區間營業額"]
+                ];
+
+                rangeData.forEach((data) => {
+                    aoa.push([`${data.month}月`, data.company || 0, data.business || 0, data.floor || 0, data.total || 0]);
+                });
+
+                aoa.push(["", "", "", "", ""]); 
+                aoa.push([`區間合計`, totalCompany, totalBusiness, totalFloor, grandTotal]);
+
+                const ws = XLSX.utils.aoa_to_sheet(aoa);
+                ws['!merges'] = [ { s: {r:0, c:0}, e: {r:0, c:4} } ]; 
+                ws['!cols'] = [{wch: 10}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15}];
+
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "統整表");
+                XLSX.writeFile(wb, `${chartYear}年_${start}月至${end}月_營收統整.xlsx`);
+            };
+
+            const dynamicChartData = useMemo(() => {
+                if (!showChartModal) return [];
+                const data = [];
+                const start = Math.min(chartStartMonth, chartEndMonth);
+                const end = Math.max(chartStartMonth, chartEndMonth);
+                
+                for (let m = start; m <= end; m++) {
+                    let company = 0, business = 0, total = 0;
+                    projects.forEach(p => {
+                        const d = new Date(p.orderDate);
+                        if (d.getFullYear() === chartYear && d.getMonth() + 1 === m) {
+                            const amt = (Number(p.deposit) || 0) + (Number(p.balance) || 0);
+                            if (p.type === '公司件') company += amt;
+                            else if (p.type === '業務件') business += amt;
+                            total += amt;
+                        }
+                    });
+                    data.push({ month: m, company, business, total });
+                }
+                return data;
+            }, [showChartModal, chartYear, chartStartMonth, chartEndMonth, projects]);
+
+            useEffect(() => {
+                if (!showChartModal || dynamicChartData.length === 0) return;
+
+                const commonOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: true } },
+                    scales: {
+                        x: { display: false }, 
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#e2e8f0' },
+                            ticks: { callback: (val) => '$' + val.toLocaleString() }
+                        }
+                    },
+                    layout: { padding: { bottom: 0 } }
+                };
+
+                const renderChart = (id, datasets) => {
+                    if (chartInstances.current[id]) chartInstances.current[id].destroy();
+                    const ctx = document.getElementById(id);
+                    if (!ctx) return;
+                    chartInstances.current[id] = new Chart(ctx, {
+                        type: 'bar',
+                        data: { labels: dynamicChartData.map(d => `${d.month}月`), datasets },
+                        options: commonOptions
+                    });
+                };
+
+                renderChart('chart-company', [{ data: dynamicChartData.map(d => d.company), backgroundColor: '#0f766e', barPercentage: 0.4 }]);
+                renderChart('chart-business', [{ data: dynamicChartData.map(d => d.business), backgroundColor: '#106487', barPercentage: 0.4 }]);
+                renderChart('chart-total', [{ data: dynamicChartData.map(d => d.total), backgroundColor: '#106487', barPercentage: 0.4 }]);
+                renderChart('chart-compare', [
+                    { data: dynamicChartData.map(d => d.company), backgroundColor: '#0f766e', barPercentage: 0.8, categoryPercentage: 0.6 },
+                    { data: dynamicChartData.map(d => d.business), backgroundColor: '#e67837', barPercentage: 0.8, categoryPercentage: 0.6 }
+                ]);
+            }, [dynamicChartData, showChartModal]);
+
+            const ChartModal = () => (
+                <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 overflow-y-auto pt-10 pb-20 px-4">
+                    <div className="max-w-6xl mx-auto bg-white rounded-2xl shadow-2xl p-6">
+                        <div className="flex flex-col md:flex-row items-center justify-between border-b pb-4 mb-6 gap-4">
+                            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">📊 動態圖表分析中心</h2>
+                            <div className="flex flex-wrap items-center gap-4">
+                                <div className="flex items-center gap-2 bg-slate-100 p-2 rounded-lg">
+                                    <span className="text-sm font-bold text-slate-600">年份:</span>
+                                    <select className="w-20 bg-white border rounded px-2 py-1 text-sm font-bold outline-none" value={chartYear} onChange={e=>setChartYear(Number(e.target.value))}>
+                                        {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    <span className="text-sm font-bold text-slate-600 ml-2">區間:</span>
+                                    <select className="bg-white border rounded px-2 py-1 text-sm font-bold outline-none" value={chartStartMonth} onChange={e=>setChartStartMonth(Number(e.target.value))}>
+                                        {[...Array(12).keys()].map(i=><option key={i+1} value={i+1}>{i+1}月</option>)}
+                                    </select>
+                                    <span className="text-slate-400 font-bold">~</span>
+                                    <select className="bg-white border rounded px-2 py-1 text-sm font-bold outline-none" value={chartEndMonth} onChange={e=>setChartEndMonth(Number(e.target.value))}>
+                                        {[...Array(12).keys()].map(i=><option key={i+1} value={i+1}>{i+1}月</option>)}
+                                    </select>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={handleExportRangeExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold shadow-md">📥 匯出此區間報表</button>
+                                    <button onClick={() => setShowChartModal(false)} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg font-bold">關閉</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="space-y-12">
+                            <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
+                                <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年公司件窗簾走向圖</h3>
+                                <div className="overflow-x-auto w-full hide-scrollbar"><div className="min-w-[500px]"><div className="h-[300px] w-full"><canvas id="chart-company"></canvas></div></div></div>
+                            </div>
+                            <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
+                                <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年業務件窗簾走向圖</h3>
+                                <div className="overflow-x-auto w-full hide-scrollbar"><div className="min-w-[500px]"><div className="h-[300px] w-full"><canvas id="chart-business"></canvas></div></div></div>
+                            </div>
+                            <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
+                                <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年營業額走向圖</h3>
+                                <div className="overflow-x-auto w-full hide-scrollbar"><div className="min-w-[500px]"><div className="h-[300px] w-full"><canvas id="chart-total"></canvas></div></div></div>
+                            </div>
+                            <div className="border border-slate-200 rounded-lg p-6 bg-white shadow-sm">
+                                <h3 className="text-center font-black text-lg text-slate-700 mb-4">{chartYear}年公司件與業務件走向圖</h3>
+                                <div className="overflow-x-auto w-full hide-scrollbar"><div className="min-w-[500px]"><div className="h-[300px] w-full"><canvas id="chart-compare"></canvas></div></div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+
+            if (isLocked) {
+                return (
+                    <div className="h-screen w-screen flex items-center justify-center lock-screen px-4">
+                        <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[30px] shadow-2xl border border-white/20 text-center w-full max-w-sm">
+                            <h2 className="text-white text-2xl font-black mb-6">{isInstallMode ? 'OSSEN 安裝日期登記' : 'OSSEN SYSTEM'}</h2>
+                            <input type="password" placeholder="輸入密碼" inputMode="numeric" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl py-4 px-6 text-white text-center text-xl mb-6 outline-none focus:border-indigo-500" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} autoFocus />
+                            <button onClick={handleLogin} className="w-full bg-indigo-600 active:bg-indigo-700 text-white font-black py-4 rounded-2xl shadow-lg transition-transform active:scale-95">進入系統</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // 安裝日期登記頁 (員工用,不顯示任何金額)
+            if (isInstallMode) {
+                return (
+                    <div className="min-h-screen bg-[#f1f5f9] pb-20">
+                        <div className="bg-[#0f172a] text-white sticky top-0 z-30 shadow-md">
+                            <div className="flex items-center justify-between px-4 py-3">
+                                <div className="font-black text-lg">📅 安裝日期登記</div>
+                                <div className="text-xs bg-cyan-600 px-2 py-1 rounded-lg">尚未安排 {missingInstallCount} 件</div>
+                            </div>
+                            <div className="p-2 space-y-2 bg-white border-b border-slate-200">
+                                <div className="flex gap-2">
+                                    <button onClick={()=>{setInstallFilter('all'); setRecentIds({});}} className={`flex-1 py-2 rounded-xl text-xs font-black ${installFilter==='all' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>全部案件</button>
+                                    <button onClick={()=>{setInstallFilter('missing'); setRecentIds({});}} className={`flex-1 py-2 rounded-xl text-xs font-black ${installFilter==='missing' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>尚未安排安裝</button>
+                                </div>
+                                <div className="flex gap-2 overflow-x-auto hide-scrollbar">
+                                    {['全部', '公司件', '業務件', '地板壁紙'].map(t => (
+                                        <button key={t} onClick={()=>setInstallType(t)} className={`shrink-0 px-4 py-2 rounded-full font-bold text-xs ${installType===t ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{t}</button>
+                                    ))}
+                                </div>
+                                <input type="text" className="w-full bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700" placeholder="🔍 搜尋客戶名稱..." value={installSearch} onChange={e=>setInstallSearch(e.target.value)} />
+                            </div>
+                        </div>
+                        <div className="px-4 py-4 space-y-3">
+                            <div className="text-xs font-bold text-slate-500">共 {installList.length} 筆</div>
+                            {installList.length === 0 && <div className="text-center text-slate-400 font-bold py-10">沒有符合的案件</div>}
+                            {installList.map(p => (
+                                <div key={p.firebaseId} className="bg-white rounded-2xl p-4 mobile-card border border-slate-100 relative overflow-hidden">
+                                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${p.installDate ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
+                                    <div className="pl-3">
+                                        <div className="flex justify-between items-start mb-1">
+                                            <span className="text-xs font-bold text-slate-400">{p.orderDate}</span>
+                                            <div className="flex items-center gap-1.5">
+                                                {p.type && <span className="text-[10px] font-bold bg-indigo-50 text-indigo-500 px-2 py-0.5 rounded-full">{p.type}</span>}
+                                                <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{p.staff}</span>
+                                            </div>
+                                        </div>
+                                        <h3 className="text-lg font-black text-slate-800 mb-2">{p.client}</h3>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] font-bold text-slate-400 shrink-0">安裝日:</span>
+                                            <input type="date" className={`flex-1 rounded-lg px-2 py-2 text-sm font-bold ${!p.installDate ? 'date-missing' : 'bg-slate-50'}`} value={p.installDate} onChange={e=>updateInstallDate(p.firebaseId, e.target.value)} />
+                                            {recentIds[p.firebaseId] && <span className="text-[10px] font-black text-emerald-500 shrink-0">✓ 已儲存</span>}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            }
+
+            // 老闆模式 (手機版)
+            if (isBossMode) {
+                return (
+                    <div className="min-h-screen flex flex-col boss-mode-container bg-[#f1f5f9]">
+                        {showChartModal && <ChartModal />}
+                        <div className="bg-[#0f172a] text-white sticky top-0 z-30 shadow-md">
+                            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+                                <div className="font-black text-lg flex items-center gap-2">
+                                    <select className="bg-slate-800 border border-slate-600 text-white rounded px-2 py-1 outline-none text-sm font-mono" value={selectedYear} onChange={e=>{setSelectedYear(Number(e.target.value)); setShowCrossMonthUnpaid(false);}}>
+                                        {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    <span>/ {selectedMonth}月</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                    <div className="text-[11px] bg-rose-600 px-2 py-1 rounded-lg">欠尾款 ${unpaidBalance.sum.toLocaleString()}</div>
+                                    <div className="text-xs bg-indigo-600 px-2 py-1 rounded-lg">總額 ${totalRevenue.toLocaleString()}</div>
+                                </div>
+                            </div>
+                            <div className="overflow-x-auto hide-scrollbar flex p-2 gap-2 border-b border-slate-800">
+                                {[...Array(12).keys()].map(i => (
+                                    <button key={i+1} onClick={()=>{setSelectedMonth(i+1); setShowCrossMonthUnpaid(false);}} className={`shrink-0 w-12 h-10 rounded-lg font-bold text-sm flex items-center justify-center transition-colors ${selectedMonth===i+1 && !showCrossMonthUnpaid ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                                        {i+1}月
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="p-2 space-y-2 bg-white border-b border-slate-200">
+                                <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+                                    {['公司件', '業務件', '地板壁紙'].map(t => (
+                                        <button key={t} onClick={()=>setSelectedType(t)} className={`shrink-0 px-4 py-2 rounded-full font-bold text-xs ${selectedType===t ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>{t}</button>
+                                    ))}
+                                    <button onClick={()=>setShowCrossMonthUnpaid(!showCrossMonthUnpaid)} className={`shrink-0 px-4 py-2 rounded-full font-bold text-xs ${showCrossMonthUnpaid ? 'bg-rose-500 text-white shadow-md' : 'bg-rose-50 text-rose-600'}`}>🚨 跨月欠款總覽</button>
+                                </div>
+                                <div className="flex gap-2 overflow-x-auto hide-scrollbar">
+                                    <div className="flex-1 min-w-[120px] relative shrink-0">
+                                        <input type="text" className="w-full bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700 pr-9" placeholder="🔍 搜尋..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                        {isGlobalSearch && (
+                                            <button onClick={()=>setSearchTerm('')} className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600" title="清除搜尋">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                            </button>
+                                        )}
+                                    </div>
+                                    <button onClick={()=>setShowMobileFilters(!showMobileFilters)} className={`px-3 py-2 rounded-xl text-xs font-bold shrink-0 ${filterStatus!=='all' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>
+                                        {showMobileFilters ? '收起' : '篩選'}
+                                    </button>
+                                </div>
+                                {showMobileFilters && (
+                                    <div className="grid grid-cols-4 gap-1.5 pt-1 animate-fade-in">
+                                        <button onClick={()=>setFilterStatus('all')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>全部</button>
+                                        <button onClick={()=>setFilterStatus('deposit')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠訂金</button>
+                                        <button onClick={()=>setFilterStatus('balance')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>欠尾款</button>
+                                        <button onClick={()=>setFilterStatus('master-collect')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='master-collect' ? 'bg-purple-600 text-white' : 'bg-purple-50 text-purple-600'}`}>師傅代收</button>
+                                        <button onClick={()=>setFilterStatus('receipt')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-600'}`}>欠收據</button>
+                                        <button onClick={()=>setFilterStatus('report')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-600'}`}>有狀況</button>
+                                        <button onClick={()=>setFilterStatus('no-install-date')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>未排施工</button>
+                                        <button onClick={()=>setFilterStatus('pending-settlement')} className={`py-2 rounded-lg text-[11px] font-bold ${filterStatus==='pending-settlement' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-600'}`}>待結算</button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        {isGlobalSearch && (
+                            <div className="mx-4 mt-3 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold flex items-center justify-between">
+                                <span>全域搜尋「{searchTerm}」共 {filteredAndSortedProjects.length} 筆（跨月）</span>
+                                <button onClick={()=>setSearchTerm('')} className="text-white/90 hover:text-white underline underline-offset-2">清除</button>
+                            </div>
+                        )}
+                        <div className="px-4 space-y-3 py-4">
+                            {filteredAndSortedProjects.map(p => {
+                                const status = getProjectStatus(p);
+                                const displayBStatus = getDisplayBStatus(p);
+                                return (
+                                    <div key={p.firebaseId} className="bg-white rounded-2xl p-4 mobile-card border border-slate-100 relative overflow-hidden">
+                                        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${displayBStatus==='未繳'?'bg-rose-500': displayBStatus==='師傅代收'?'bg-purple-400' : status==='完工'?'bg-emerald-500':'bg-slate-300'}`}></div>
+                                        <div className="pl-3">
+                                            <div className="flex justify-between items-start mb-1">
+                                                <span className="text-xs font-bold text-slate-400">{p.orderDate}</span>
+                                                <div className="flex items-center gap-1.5">
+                                                    {p.isSettled ? (
+                                                        <span className="text-[10px] font-bold bg-emerald-500 text-white px-1.5 py-0.5 rounded-md shadow-sm">已結算</span>
+                                                    ) : (
+                                                        <span className="text-[10px] font-bold bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-md">未結算</span>
+                                                    )}
+                                                    <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{p.staff}</span>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-between items-center mb-3">
+                                                <h3 className="text-lg font-black text-slate-800 truncate pr-2 flex-1">{p.client}</h3>
+                                                <span className="text-lg font-black text-indigo-600 font-mono">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</span>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-50 p-2 rounded-xl">
+                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">訂金 ${Number(p.deposit).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${p.dStatus==='未繳'?'bg-rose-100 text-rose-600':'bg-slate-200 text-slate-600'}`}>{p.dStatus}</div></div>
+                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">尾款 ${Number(p.balance).toLocaleString()}</span><div className={`text-xs font-bold p-1 rounded ${displayBStatus==='未繳'?'bg-rose-500 text-white': displayBStatus==='師傅代收' ? 'bg-purple-100 text-purple-600' : 'bg-slate-200 text-slate-600'}`}>{displayBStatus}</div></div>
+                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">工程進度</span><div className={`text-center py-1 rounded text-xs font-bold text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : status === '製作中' ? 'bg-blue-500' : 'bg-slate-400'}`}>{status}</div></div>
+                                                <div className="flex flex-col"><span className="text-[10px] text-slate-400 font-bold mb-1">收據</span><div className={`text-xs font-bold p-1 rounded ${p.receipt==='未繳'?'bg-orange-100 text-orange-600':'bg-slate-200 text-slate-600'}`}>{p.receipt}</div></div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-2 mb-1"><span className="text-[10px] font-bold text-slate-400">施工日:</span><span className={`text-xs font-bold ${!p.installDate ? 'text-rose-500' : 'text-slate-700'}`}>{p.installDate || '未定'}</span></div>
+                                                    <div className="text-xs text-slate-500">{p.note || '無備註'}</div>
+                                                </div>
+                                                {p.report === '有狀況' && <span className="px-2 py-1 rounded text-[10px] font-bold bg-amber-500 text-white">有狀況</span>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            }
+
+            // 行政模式 (電腦版)
+            return (
+                <div className="flex h-screen overflow-hidden admin-mode-container">
+                    {showChartModal && <ChartModal />}
+                    <aside className="w-24 bg-[#0f172a] flex flex-col shrink-0">
+                        <div className="p-4 border-b border-slate-800 text-center">
+                            <select className="w-full bg-slate-800 text-white font-black text-center border border-slate-600 rounded py-1 outline-none text-sm font-mono cursor-pointer hover:bg-slate-700 transition-colors" value={selectedYear} onChange={e=>{setSelectedYear(Number(e.target.value)); setShowCrossMonthUnpaid(false);}}>
+                                {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                            </select>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                            { [...Array(12).keys()].map(i => (
+                                <button key={i+1} onClick={()=>{setSelectedMonth(i+1); setShowCrossMonthUnpaid(false);}} className={`w-full py-3 rounded-lg font-bold text-xs ${selectedMonth===i+1 && !showCrossMonthUnpaid ?'bg-indigo-600 text-white shadow-lg':'text-slate-500'}`}>{i+1}月</button>
+                            ))}
+                        </div>
+                    </aside>
+
+                    <main className="flex-1 flex flex-col bg-white overflow-hidden">
+                        <header className="px-10 py-4 flex justify-between items-center shrink-0 border-b">
+                            <div className="flex flex-col gap-2">
+                                <div className="flex items-center gap-4">
+                                    <h1 className="text-2xl font-black text-slate-800">
+                                        {isGlobalSearch ? (
+                                            <span className="text-blue-600">搜尋「{searchTerm}」共 {filteredAndSortedProjects.length} 筆（全年度）</span>
+                                        ) : showCrossMonthUnpaid ? (
+                                            <span className="text-rose-600">🚨 全年度欠款與未開收據</span>
+                                        ) : (
+                                            <>{selectedYear}年 {selectedMonth}月 <span className="text-indigo-600">{selectedType}</span></>
+                                        )}
+                                    </h1>
+                                    {!showCrossMonthUnpaid && (
+                                        <div className="bg-indigo-50 px-4 py-2 rounded-2xl border border-indigo-100 ml-2">
+                                            <span className="text-[10px] font-black text-indigo-400 block uppercase leading-none mb-1">{isGlobalSearch ? '搜尋結果總額' : `當月業績總額 (${filterStaff})`}</span>
+                                            <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
+                                        </div>
+                                    )}
+                                    {(
+                                        <div className="bg-rose-50 px-4 py-2 rounded-2xl border border-rose-200 ml-2">
+                                            <span className="text-[10px] font-black text-rose-400 block uppercase leading-none mb-1">欠尾款金額 ({unpaidBalance.count} 筆)</span>
+                                            <span className="text-xl font-black text-rose-600 font-mono">${unpaidBalance.sum.toLocaleString()}</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none">
+                                            <svg className="w-3 h-3 text-slate-400" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20"><path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m19 19-4-4m0-7A7 7 0 1 1 1 8a7 7 0 0 1 14 0Z"/></svg>
+                                        </div>
+                                        <input type="text" className="bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-48 pl-8 pr-8 p-1.5" placeholder="搜尋客戶/備註/金額..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                        {isGlobalSearch && (
+                                            <button onClick={()=>setSearchTerm('')} className="absolute inset-y-0 right-0 flex items-center pr-2 text-slate-400 hover:text-slate-600" title="清除搜尋">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                            </button>
+                                        )}
+                                    </div>
+                                    <button onClick={()=>setFilterStatus('all')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='all' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-200 text-slate-500'}`}>全部</button>
+                                    <button onClick={()=>setFilterStatus('deposit')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='deposit' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠訂金</button>
+                                    <button onClick={()=>setFilterStatus('balance')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='balance' ? 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300' : 'bg-rose-100 text-rose-600 hover:bg-rose-200'}`}>欠尾款</button>
+                                    <button onClick={()=>setFilterStatus('master-collect')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='master-collect' ? 'bg-purple-600 text-white shadow-md ring-2 ring-purple-300' : 'bg-purple-100 text-purple-600 hover:bg-purple-200'}`}>師傅代收</button>
+                                    <button onClick={()=>setFilterStatus('receipt')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='receipt' ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300' : 'bg-orange-100 text-orange-600 hover:bg-orange-200'}`}>欠收據</button>
+                                    <button onClick={()=>setFilterStatus('report')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='report' ? 'bg-amber-500 text-white shadow-md ring-2 ring-amber-300' : 'bg-amber-100 text-amber-600 hover:bg-amber-200'}`}>有狀況</button>
+                                    <button onClick={()=>setFilterStatus('no-install-date')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='no-install-date' ? 'bg-cyan-500 text-white shadow-md ring-2 ring-cyan-300' : 'bg-cyan-100 text-cyan-600 hover:bg-cyan-200'}`}>未排施工</button>
+                                    <button onClick={()=>setFilterStatus('pending-settlement')} className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${filterStatus==='pending-settlement' ? 'bg-emerald-600 text-white shadow-md ring-2 ring-emerald-300' : 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200'}`}>待結算</button>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col items-end gap-2">
+                                <div className="flex items-center gap-2">
+                                    <button onClick={() => setShowChartModal(true)} className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">📊 圖表分析</button>
+                                    <button onClick={handleExportRangeExcel} className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">區間總表匯出</button>
+                                    <button onClick={handleExportExcel} className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">月報表匯出</button>
+                                    <button onClick={handleSyncInstallView} className="flex items-center gap-1 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors" title="把所有案件的日期資料同步到員工頁(不含金額)">同步員工頁</button>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="flex items-center bg-slate-100 rounded-xl p-1 px-3">
+                                        <span className="text-[10px] font-black text-slate-400 mr-2">排序:</span>
+                                        <select className="bg-transparent text-xs font-black outline-none" value={sortOption} onChange={e=>setSortOption(e.target.value)}>
+                                            <option value="date-desc">日期：新 → 舊</option>
+                                            <option value="date-asc">日期：舊 → 新</option>
+                                            <option value="amount-desc">金額：高 → 低</option>
+                                            <option value="amount-asc">金額：低 → 高</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex items-center bg-slate-100 rounded-xl p-1 px-3">
+                                        <span className="text-[10px] font-black text-slate-400 mr-2">負責人:</span>
+                                        <select className="bg-transparent text-xs font-black outline-none" value={filterStaff} onChange={e=>setFilterStaff(e.target.value)}>
+                                            <option>全部</option><option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                                        {['公司件', '業務件', '地板壁紙'].map(t => (
+                                            <button key={t} onClick={()=>{setSelectedType(t); setShowCrossMonthUnpaid(false);}} className={`px-4 py-1.5 rounded-lg font-black text-xs ${selectedType===t && !showCrossMonthUnpaid ?'bg-white text-indigo-600 shadow-sm':'text-slate-400'}`}>{t}</button>
+                                        ))}
+                                    </div>
+                                    <button onClick={()=>setShowCrossMonthUnpaid(!showCrossMonthUnpaid)} className={`px-4 py-1.5 rounded-lg font-black text-xs ml-1 transition-colors ${showCrossMonthUnpaid?'bg-rose-500 text-white shadow-md':'bg-rose-50 text-rose-600 hover:bg-rose-100'}`}>
+                                        🚨 跨月欠款/收據
+                                    </button>
+                                </div>
+                            </div>
+                        </header>
+
+                        <div className="flex-1 overflow-auto px-10 py-6 bg-slate-50">
+                            <div className="bg-[#1e293b] p-6 rounded-[30px] shadow-xl mb-8 project-row">
+                                <div className="grid grid-cols-10 gap-3">
+                                    <div className="col-span-1"><label className="label-tiny">日期</label><input type="date" className="input-dark w-full py-2" value={formData.orderDate} onChange={e=>setFormData({...formData, orderDate:e.target.value})}/></div>
+                                    <div className="col-span-2"><label className="label-tiny">客戶名稱 {editingId && "(修改中)"}</label><input className="input-dark w-full py-2" value={formData.client} onChange={e=>setFormData({...formData, client:e.target.value})}/></div>
+                                    <div className="col-span-2"><label className="label-tiny">備註事項</label><input className="input-dark w-full py-2" placeholder="備註..." value={formData.note} onChange={e=>setFormData({...formData, note:e.target.value})}/></div>
+                                    <div className="col-span-1"><label className="label-tiny">人員</label>
+                                        <select className="input-dark w-full py-2" value={formData.staff} onChange={e=>setFormData({...formData, staff:e.target.value})}>
+                                            <option>公司</option><option>詠舜</option><option>柏村</option><option>橙家</option><option>共件</option><option>琮芢</option><option>門市</option>
+                                        </select>
+                                    </div>
+                                    <div className="col-span-1"><label className="label-tiny">訂金</label><input type="number" className="input-dark w-full py-2" value={formData.deposit} onChange={e=>setFormData({...formData, deposit:e.target.value})}/></div>
+                                    <div className="col-span-1"><label className="label-tiny">尾款</label><input type="number" className="input-dark w-full py-2" value={formData.balance} onChange={e=>setFormData({...formData, balance:e.target.value})}/></div>
+                                    <div className="col-span-1"><label className="label-tiny">施工日</label><input type="date" className="input-dark w-full py-2" value={formData.installDate} onChange={e=>setFormData({...formData, installDate:e.target.value})}/></div>
+                                    <div className="col-span-1 flex items-end gap-2">
+                                        <button onClick={handleSave} className="w-full bg-indigo-500 py-2 rounded-xl font-black text-xs text-white">{editingId ? '更新' : '儲存'}</button>
+                                        {editingId && <button onClick={()=>{setEditingId(null); setFormData({client:'', deposit:0, balance:0, orderDate: new Date().toISOString().split('T')[0], staff:'公司', note:'', installDate:'', report:'', isSettled: false, dStatus: '未繳', bStatus: '未完成'})}} className="bg-slate-500 px-2 py-2 rounded-xl text-white text-[10px]">取消</button>}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-2 pb-20">
+                                {filteredAndSortedProjects.map(p => {
+                                    const status = getProjectStatus(p);
+                                    const displayBStatus = getDisplayBStatus(p);
+                                    return (
+                                        <div key={p.firebaseId} className={`project-row compact-row bg-white border shadow-sm flex items-center relative ${showCrossMonthUnpaid ? 'border-rose-200' : 'border-slate-100'}`}>
+                                            <div className="w-48">
+                                                <p className="text-[10px] font-bold text-slate-400 font-mono">{p.orderDate}</p>
+                                                <h3 className="text-lg font-black text-slate-800 truncate" title={p.client}>{p.client}</h3>
+                                                <span className="bg-slate-100 px-2 py-0.5 rounded text-[9px] font-black text-indigo-500">{p.staff}</span>
+                                            </div>
+                                            <div className="w-48 px-4">
+                                                <p className="text-xl font-black text-slate-800 font-mono">${(Number(p.deposit)+Number(p.balance)).toLocaleString()}</p>
+                                                <p className="text-[10px] text-slate-400 font-bold">訂{p.deposit} / 尾{p.balance}</p>
+                                            </div>
+                                            <div className="w-40 px-2 border-l border-slate-100">
+                                                <label className="text-[9px] font-black text-slate-400 block mb-1">備註</label>
+                                                <input className="w-full bg-slate-50 text-xs text-slate-600 rounded p-1 outline-none border border-transparent focus:border-indigo-300 transition-colors" value={p.note || ''} onChange={e=>updateField(p.firebaseId, 'note', e.target.value)} placeholder="..." />
+                                            </div>
+                                            <div className="flex-1 grid grid-cols-5 gap-3 border-x border-slate-50 px-6">
+                                                <div>
+                                                    <label className="text-[9px] font-black text-indigo-400 block">訂金狀態</label>
+                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${p.dStatus === '未繳' ? 'status-unpaid' : 'bg-slate-50'}`} value={p.dStatus || '未繳'} onChange={e=>updateField(p.firebaseId, 'dStatus', e.target.value)}>
+                                                        <option>未繳</option><option>已轉帳</option><option>已付現</option><option>無訂金</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label className="text-[9px] font-black text-emerald-400 block">工程狀態</label>
+                                                    <div className={`text-center py-1 rounded-lg text-[10px] font-black text-white ${status === '完工' ? 'bg-emerald-500' : status.includes('有狀況') ? 'bg-amber-500' : status === '製作中' ? 'bg-blue-500' : 'bg-slate-400'}`}>{status}</div>
+                                                </div>
+                                                <div>
+                                                    <label className="text-[9px] font-black text-indigo-400 block">尾款狀態</label>
+                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${displayBStatus === '未繳' ? 'status-unpaid' : displayBStatus === '師傅代收' ? 'bg-purple-100 text-purple-700' : 'bg-slate-50'}`} value={displayBStatus} onChange={e=>updateField(p.firebaseId, 'bStatus', e.target.value)}>
+                                                        <option>未完成</option><option>未繳</option><option>已轉帳</option><option>已付現</option><option>支票</option><option>請款中</option><option>無尾款</option><option>師傅代收</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label className="text-[9px] font-black text-orange-400 block">收據</label>
+                                                    <select className={`w-full text-[11px] font-bold rounded-lg px-2 py-1 ${p.receipt === '未繳' ? 'bg-orange-100 text-orange-600' : 'bg-slate-50'}`} value={p.receipt || '未繳'} onChange={e=>updateField(p.firebaseId, 'receipt', e.target.value)}>
+                                                        <option>未繳</option><option>已繳交</option><option>訊息確認</option><option>發票</option><option>免收據</option><option>安裝後補</option>
+                                                    </select>
+                                                </div>
+                                                <div className="flex flex-col items-center justify-center border-l border-slate-100 pl-2">
+                                                    <label className="text-[9px] font-black text-slate-400 block mb-1">已結算</label>
+                                                    <input type="checkbox" className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer" checked={p.isSettled || false} onChange={e=>updateField(p.firebaseId, 'isSettled', e.target.checked)} />
+                                                </div>
+                                            </div>
+                                            <div className="w-64 px-6 flex items-center gap-3">
+                                                <div className="flex-1">
+                                                    <label className="text-[9px] font-black text-slate-400 block">安裝日</label>
+                                                    <input type="date" className={`w-full rounded-lg px-2 py-1 text-[11px] font-bold ${!p.installDate ? 'date-missing' : 'bg-slate-50'}`} value={p.installDate || ''} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
+                                                </div>
+                                                <button onClick={()=>updateField(p.firebaseId, 'report', p.report==='有狀況'?'':'有狀況')} className={`px-2 py-1 rounded-lg text-[9px] font-black border ${p.report === '有狀況' ? 'bg-amber-500 text-white' : 'text-slate-300 border-slate-200'}`}>
+                                                    狀況
+                                                </button>
+                                            </div>
+                                            <div className="w-48 flex gap-2 justify-end">
+                                                <button onClick={()=>handleDuplicate(p)} className="p-2 text-slate-300 hover:text-green-500" title="複製此訂單">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                                </button>
+                                                <button onClick={()=>startEdit(p)} className="p-2 text-indigo-400 hover:text-indigo-600" title="修改內容">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                </button>
+                                                <button onClick={()=>handleDelete(p.firebaseId, p.client)} className="p-2 text-slate-300 hover:text-red-500">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ErrorBoundary><App /></ErrorBoundary>);
+    </script>
+</body>
+</html>
