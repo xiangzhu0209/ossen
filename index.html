@@ -69,10 +69,44 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
+        // 清掉 undefined 欄位(Firebase 不接受 undefined,會直接丟錯)與 firebaseId
+        const stripUndefined = (obj) => Object.fromEntries(
+            Object.entries(obj).filter(([k, v]) => v !== undefined && k !== 'firebaseId')
+        );
+
+        // 員工頁專用的精簡資料(不含任何金額),存在獨立路徑 installView/{案件id}
+        const toInstallView = (p) => ({
+            client: p.client || '', orderDate: p.orderDate || '', staff: p.staff || '',
+            type: p.type || '', installDate: p.installDate || ''
+        });
+        const syncInstallView = (id, p) =>
+            window.fb.update(window.fb.ref(window.fb.db, `installView/${id}`), toInstallView(p))
+                .catch(err => console.error('同步員工頁失敗', err));
+
+        // 萬一畫面渲染出錯,不要整片空白,顯示錯誤訊息方便排查
+        class ErrorBoundary extends React.Component {
+            constructor(props) { super(props); this.state = { error: null }; }
+            static getDerivedStateFromError(error) { return { error }; }
+            render() {
+                if (this.state.error) {
+                    return (
+                        <div className="p-8 max-w-xl mx-auto">
+                            <h2 className="text-xl font-black text-rose-600 mb-2">程式發生錯誤</h2>
+                            <pre className="bg-slate-100 text-xs p-3 rounded-lg whitespace-pre-wrap mb-4">{String((this.state.error && this.state.error.message) || this.state.error)}</pre>
+                            <button onClick={() => window.location.reload()} className="bg-indigo-600 text-white font-black px-4 py-2 rounded-xl">重新整理</button>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
         function App() {
             const [isLocked, setIsLocked] = useState(true);
             const [password, setPassword] = useState("");
-            const CORRECT_PASSWORD = "45688123"; 
+            const urlMode = new URLSearchParams(window.location.search).get('mode');
+            const isInstallMode = urlMode === 'install'; // 員工登記安裝日期專用頁
+            const CORRECT_PASSWORD = isInstallMode ? "0000" : "45688123";
 
             const handleLogin = () => {
                 if (password.toString().trim() === CORRECT_PASSWORD) {
@@ -100,6 +134,13 @@
             const [filterStatus, setFilterStatus] = useState('all');
             const [showMobileFilters, setShowMobileFilters] = useState(false);
             const [showCrossMonthUnpaid, setShowCrossMonthUnpaid] = useState(false); 
+
+            // 安裝日期登記頁狀態
+            const [installFilter, setInstallFilter] = useState('all');   // all | missing
+            const [installType, setInstallType] = useState('全部');
+            const [installSearch, setInstallSearch] = useState('');
+            const [installRows, setInstallRows] = useState([]);       // 來自 installView 的精簡資料
+            const [recentIds, setRecentIds] = useState({});               // 剛填過日期的案件,避免填完立刻從「未安排」清單消失
 
             const [formData, setFormData] = useState({ 
                 client: '', deposit: 0, balance: 0, 
@@ -152,6 +193,15 @@
 
             useEffect(() => {
                 if (!window.fb) return;
+                if (isInstallMode) {
+                    // 員工頁:只訂閱精簡路徑,金額資料完全不會下載
+                    const vRef = window.fb.ref(window.fb.db, 'installView');
+                    window.fb.onValue(vRef, (snapshot) => {
+                        const data = snapshot.val();
+                        setInstallRows(data ? Object.keys(data).map(key => ({ ...data[key], firebaseId: key })) : []);
+                    });
+                    return;
+                }
                 const pRef = window.fb.ref(window.fb.db, 'projects');
                 window.fb.onValue(pRef, (snapshot) => {
                     const data = snapshot.val();
@@ -232,8 +282,46 @@
                 return filteredAndSortedProjects.reduce((sum, p) => sum + (Number(p.deposit) || 0) + (Number(p.balance) || 0), 0);
             }, [filteredAndSortedProjects]);
 
+            // 篩選結果中「欠尾款」的金額加總
+            const unpaidBalance = useMemo(() => {
+                let sum = 0, count = 0;
+                filteredAndSortedProjects.forEach(p => {
+                    if (getDisplayBStatus(p) === '未繳') { sum += Number(p.balance) || 0; count++; }
+                });
+                return { sum, count };
+            }, [filteredAndSortedProjects]);
+
+            // 安裝日期登記頁:只保留不含金額的欄位
+            const installList = useMemo(() => {
+                if (!isInstallMode) return [];
+                const term = installSearch.trim().toLowerCase();
+                return installRows
+                    .filter(p => {
+                        if (installType !== '全部' && p.type !== installType) return false;
+                        if (term && !(p.client || '').toLowerCase().includes(term)) return false;
+                        const missing = !p.installDate || String(p.installDate).trim() === '';
+                        if (installFilter === 'missing' && !missing && !recentIds[p.firebaseId]) return false;
+                        return true;
+                    })
+                    .map(p => ({ firebaseId: p.firebaseId, client: p.client, orderDate: p.orderDate, staff: p.staff, type: p.type, installDate: p.installDate || '' }))
+                    .sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate));
+            }, [isInstallMode, installRows, installFilter, installType, installSearch, recentIds]);
+            const missingInstallCount = useMemo(
+                () => installRows.filter(p => !p.installDate || String(p.installDate).trim() === '').length,
+                [installRows]
+            );
+
+            const updateInstallDate = (id, value) => {
+                if (!isInstallMode) return;
+                // 先寫員工頁路徑,成功後再把日期帶回主資料(只寫 installDate,不需要讀取金額)
+                window.fb.update(window.fb.ref(window.fb.db, `installView/${id}`), { installDate: value })
+                    .then(() => window.fb.update(window.fb.ref(window.fb.db, `projects/${id}`), { installDate: value }).catch(e => console.error('回寫主資料失敗', e)))
+                    .catch(err => alert('儲存失敗:' + err.message));
+                setRecentIds(prev => ({ ...prev, [id]: true }));
+            };
+
             const handleSave = () => {
-                if (isBossMode) return;
+                if (isBossMode || isInstallMode) return;
                 if (!formData.client) return alert("請輸入客戶");
                 
                 let dStatus = formData.dStatus || '未繳';
@@ -246,11 +334,20 @@
                 const bStatus = determineBalanceStatus(formData.balance, formData.installDate, formData.report, formData.bStatus);
                 const receipt = formData.receipt || '未繳';
 
-                if (editingId) {
-                    window.fb.update(window.fb.ref(window.fb.db, `projects/${editingId}`), { ...formData, dStatus, bStatus, receipt });
-                    setEditingId(null);
-                } else {
-                    window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...formData, dStatus, bStatus, receipt, type: selectedType, isSettled: false });
+                const clean = stripUndefined(formData);
+                try {
+                    if (editingId) {
+                        window.fb.update(window.fb.ref(window.fb.db, `projects/${editingId}`), { ...clean, dStatus, bStatus, receipt });
+                        const old = projects.find(p => p.firebaseId === editingId) || {};
+                        syncInstallView(editingId, { ...old, ...clean });
+                        setEditingId(null);
+                    } else {
+                        const newRef = window.fb.push(window.fb.ref(window.fb.db, 'projects'), { ...clean, dStatus, bStatus, receipt, type: selectedType, isSettled: false });
+                        syncInstallView(newRef.key, { ...clean, type: selectedType });
+                    }
+                } catch (err) {
+                    alert('儲存失敗:' + err.message);
+                    return;
                 }
 
                 const preservedDate = formData.orderDate;
@@ -263,21 +360,28 @@
 
             const startEdit = (p) => {
                 setEditingId(p.firebaseId);
-                setFormData({ note: '', isSettled: false, ...p });
+                setFormData({ note: '', isSettled: false, installDate: '', report: '', ...stripUndefined(p) });
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             };
 
             const handleDuplicate = (p) => {
                 setEditingId(null);
+                // 只帶入基本資料,每個欄位都給預設值(不再把 undefined 的 firebaseId 帶進表單)
                 setFormData({
-                    ...p, client: `${p.client} (副本)`, orderDate: new Date().toISOString().split('T')[0],
-                    note: p.note || '', isSettled: false, firebaseId: undefined
+                    client: `${p.client || ''} (副本)`,
+                    deposit: p.deposit ?? 0,
+                    balance: p.balance ?? 0,
+                    orderDate: new Date().toISOString().split('T')[0],
+                    staff: p.staff || '公司',
+                    note: p.note || '',
+                    receipt: '未繳', installDate: '', report: '',
+                    isSettled: false, dStatus: '未繳', bStatus: '未完成'
                 });
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             };
 
             const updateField = (id, field, value) => {
-                if (isBossMode) return;
+                if (isBossMode || isInstallMode) return;
                 const updates = { [field]: value };
                 const target = projects.find(p => p.firebaseId === id);
                 
@@ -293,12 +397,24 @@
                     updates.bStatus = determineBalanceStatus(curB, curI, curR, target.bStatus);
                 }
                 window.fb.update(window.fb.ref(window.fb.db, `projects/${id}`), updates);
+                if (field === 'installDate') syncInstallView(id, { ...target, installDate: value });
             };
 
             const handleDelete = (id, client) => {
                 if (!isBossMode && confirm(`確定要刪除「${client}」嗎？`)) {
                     window.fb.remove(window.fb.ref(window.fb.db, `projects/${id}`));
+                    window.fb.remove(window.fb.ref(window.fb.db, `installView/${id}`));
                 }
+            };
+
+            // 一次性(或隨時)把所有案件的精簡資料同步到員工頁
+            const handleSyncInstallView = () => {
+                if (!confirm(`要把目前 ${projects.length} 筆案件同步到員工安裝日期頁嗎?`)) return;
+                const map = {};
+                projects.forEach(p => { map[p.firebaseId] = toInstallView(p); });
+                window.fb.update(window.fb.ref(window.fb.db, 'installView'), map)
+                    .then(() => alert(`同步完成,共 ${projects.length} 筆`))
+                    .catch(err => alert('同步失敗:' + err.message));
             };
 
             const handleExportExcel = () => {
@@ -483,9 +599,59 @@
                 return (
                     <div className="h-screen w-screen flex items-center justify-center lock-screen px-4">
                         <div className="bg-white/10 backdrop-blur-xl p-8 rounded-[30px] shadow-2xl border border-white/20 text-center w-full max-w-sm">
-                            <h2 className="text-white text-2xl font-black mb-6">OSSEN SYSTEM</h2>
+                            <h2 className="text-white text-2xl font-black mb-6">{isInstallMode ? 'OSSEN 安裝日期登記' : 'OSSEN SYSTEM'}</h2>
                             <input type="password" placeholder="輸入密碼" inputMode="numeric" className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl py-4 px-6 text-white text-center text-xl mb-6 outline-none focus:border-indigo-500" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} autoFocus />
                             <button onClick={handleLogin} className="w-full bg-indigo-600 active:bg-indigo-700 text-white font-black py-4 rounded-2xl shadow-lg transition-transform active:scale-95">進入系統</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // 安裝日期登記頁 (員工用,不顯示任何金額)
+            if (isInstallMode) {
+                return (
+                    <div className="min-h-screen bg-[#f1f5f9] pb-20">
+                        <div className="bg-[#0f172a] text-white sticky top-0 z-30 shadow-md">
+                            <div className="flex items-center justify-between px-4 py-3">
+                                <div className="font-black text-lg">📅 安裝日期登記</div>
+                                <div className="text-xs bg-cyan-600 px-2 py-1 rounded-lg">尚未安排 {missingInstallCount} 件</div>
+                            </div>
+                            <div className="p-2 space-y-2 bg-white border-b border-slate-200">
+                                <div className="flex gap-2">
+                                    <button onClick={()=>{setInstallFilter('all'); setRecentIds({});}} className={`flex-1 py-2 rounded-xl text-xs font-black ${installFilter==='all' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>全部案件</button>
+                                    <button onClick={()=>{setInstallFilter('missing'); setRecentIds({});}} className={`flex-1 py-2 rounded-xl text-xs font-black ${installFilter==='missing' ? 'bg-cyan-500 text-white' : 'bg-cyan-50 text-cyan-600'}`}>尚未安排安裝</button>
+                                </div>
+                                <div className="flex gap-2 overflow-x-auto hide-scrollbar">
+                                    {['全部', '公司件', '業務件', '地板壁紙'].map(t => (
+                                        <button key={t} onClick={()=>setInstallType(t)} className={`shrink-0 px-4 py-2 rounded-full font-bold text-xs ${installType===t ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{t}</button>
+                                    ))}
+                                </div>
+                                <input type="text" className="w-full bg-slate-100 border-none rounded-xl px-4 py-2 text-sm font-bold text-slate-700" placeholder="🔍 搜尋客戶名稱..." value={installSearch} onChange={e=>setInstallSearch(e.target.value)} />
+                            </div>
+                        </div>
+                        <div className="px-4 py-4 space-y-3">
+                            <div className="text-xs font-bold text-slate-500">共 {installList.length} 筆</div>
+                            {installList.length === 0 && <div className="text-center text-slate-400 font-bold py-10">沒有符合的案件</div>}
+                            {installList.map(p => (
+                                <div key={p.firebaseId} className="bg-white rounded-2xl p-4 mobile-card border border-slate-100 relative overflow-hidden">
+                                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${p.installDate ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
+                                    <div className="pl-3">
+                                        <div className="flex justify-between items-start mb-1">
+                                            <span className="text-xs font-bold text-slate-400">{p.orderDate}</span>
+                                            <div className="flex items-center gap-1.5">
+                                                {p.type && <span className="text-[10px] font-bold bg-indigo-50 text-indigo-500 px-2 py-0.5 rounded-full">{p.type}</span>}
+                                                <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{p.staff}</span>
+                                            </div>
+                                        </div>
+                                        <h3 className="text-lg font-black text-slate-800 mb-2">{p.client}</h3>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] font-bold text-slate-400 shrink-0">安裝日:</span>
+                                            <input type="date" className={`flex-1 rounded-lg px-2 py-2 text-sm font-bold ${!p.installDate ? 'date-missing' : 'bg-slate-50'}`} value={p.installDate} onChange={e=>updateInstallDate(p.firebaseId, e.target.value)} />
+                                            {recentIds[p.firebaseId] && <span className="text-[10px] font-black text-emerald-500 shrink-0">✓ 已儲存</span>}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 );
@@ -504,7 +670,10 @@
                                     </select>
                                     <span>/ {selectedMonth}月</span>
                                 </div>
-                                <div className="text-xs bg-indigo-600 px-2 py-1 rounded-lg">總額 ${totalRevenue.toLocaleString()}</div>
+                                <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                    <div className="text-[11px] bg-rose-600 px-2 py-1 rounded-lg">欠尾款 ${unpaidBalance.sum.toLocaleString()}</div>
+                                    <div className="text-xs bg-indigo-600 px-2 py-1 rounded-lg">總額 ${totalRevenue.toLocaleString()}</div>
+                                </div>
                             </div>
                             <div className="overflow-x-auto hide-scrollbar flex p-2 gap-2 border-b border-slate-800">
                                 {[...Array(12).keys()].map(i => (
@@ -634,6 +803,12 @@
                                             <span className="text-xl font-black text-indigo-700 font-mono">${totalRevenue.toLocaleString()}</span>
                                         </div>
                                     )}
+                                    {(
+                                        <div className="bg-rose-50 px-4 py-2 rounded-2xl border border-rose-200 ml-2">
+                                            <span className="text-[10px] font-black text-rose-400 block uppercase leading-none mb-1">欠尾款金額 ({unpaidBalance.count} 筆)</span>
+                                            <span className="text-xl font-black text-rose-600 font-mono">${unpaidBalance.sum.toLocaleString()}</span>
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                     <div className="relative">
@@ -663,6 +838,7 @@
                                     <button onClick={() => setShowChartModal(true)} className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">📊 圖表分析</button>
                                     <button onClick={handleExportRangeExcel} className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">區間總表匯出</button>
                                     <button onClick={handleExportExcel} className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors">月報表匯出</button>
+                                    <button onClick={handleSyncInstallView} className="flex items-center gap-1 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md transition-colors" title="把所有案件的日期資料同步到員工頁(不含金額)">同步員工頁</button>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <div className="flex items-center bg-slate-100 rounded-xl p-1 px-3">
@@ -763,7 +939,7 @@
                                             <div className="w-64 px-6 flex items-center gap-3">
                                                 <div className="flex-1">
                                                     <label className="text-[9px] font-black text-slate-400 block">安裝日</label>
-                                                    <input type="date" className={`w-full rounded-lg px-2 py-1 text-[11px] font-bold ${!p.installDate ? 'date-missing' : 'bg-slate-50'}`} value={p.installDate} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
+                                                    <input type="date" className={`w-full rounded-lg px-2 py-1 text-[11px] font-bold ${!p.installDate ? 'date-missing' : 'bg-slate-50'}`} value={p.installDate || ''} onChange={e=>updateField(p.firebaseId, 'installDate', e.target.value)} />
                                                 </div>
                                                 <button onClick={()=>updateField(p.firebaseId, 'report', p.report==='有狀況'?'':'有狀況')} className={`px-2 py-1 rounded-lg text-[9px] font-black border ${p.report === '有狀況' ? 'bg-amber-500 text-white' : 'text-slate-300 border-slate-200'}`}>
                                                     狀況
@@ -791,7 +967,7 @@
         }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(<ErrorBoundary><App /></ErrorBoundary>);
     </script>
 </body>
 </html>
